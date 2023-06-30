@@ -15,8 +15,11 @@ limitations under the License.
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strings"
 	"time"
@@ -28,10 +31,12 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/go-logr/logr"
+	configapi "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	hyperapi "github.com/openshift/hypershift/api"
 	hyperv1 "github.com/openshift/hypershift/api/v1beta1"
 	awsutil "github.com/openshift/hypershift/cmd/infra/aws/util"
+	"github.com/openshift/hypershift/cmd/util"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/nodepool"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/platform/aws"
@@ -61,6 +66,10 @@ import (
 )
 
 func main() {
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.JSONEncoder(func(o *zapcore.EncoderConfig) {
+		o.EncodeTime = zapcore.RFC3339TimeEncoder
+	})))
+
 	cmd := &cobra.Command{
 		Use: "hypershift-operator",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -72,6 +81,7 @@ func main() {
 	cmd.Version = version.String()
 
 	cmd.AddCommand(NewStartCommand())
+	cmd.AddCommand(NewInitCommand())
 
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -97,10 +107,6 @@ type StartOptions struct {
 }
 
 func NewStartCommand() *cobra.Command {
-	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.JSONEncoder(func(o *zapcore.EncoderConfig) {
-		o.EncodeTime = zapcore.RFC3339TimeEncoder
-	})))
-
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Runs the Hypershift operator",
@@ -437,4 +443,128 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 	// Start the controllers
 	log.Info("starting manager")
 	return mgr.Start(ctx)
+}
+
+func NewInitCommand() *cobra.Command {
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.JSONEncoder(func(o *zapcore.EncoderConfig) {
+		o.EncodeTime = zapcore.RFC3339TimeEncoder
+	})))
+
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Initializes the environment for the Hypershift Operator",
+	}
+
+	cmd.Run = func(cmd *cobra.Command, args []string) {
+		ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
+		defer cancel()
+
+		if err := runInit(ctx, ctrl.Log.WithName("init")); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	}
+
+	return cmd
+}
+
+func runInit(ctx context.Context, log logr.Logger) error {
+	log.Info("Initializing environment for Hypershift Operator")
+	client, err := util.GetClient()
+	if err != nil {
+		return err
+	}
+	config, err := ctrl.GetConfig()
+	if err != nil {
+		return err
+	}
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return fmt.Errorf("unable to get discovery client: %w", err)
+	}
+	mgmtClusterCaps, err := capabilities.DetectManagementClusterCapabilities(discoveryClient)
+	if err != nil {
+		return fmt.Errorf("unable to detect management cluster capabilities: %w", err)
+	}
+
+	trustedCABundle := new(bytes.Buffer)
+	var ocmTrustedCABundle []byte
+	if _, err := os.Stat("/var/run/ca-trust/tls-ca-bundle.pem"); err == nil {
+		ocmTrustedCABundle, err = ioutil.ReadFile("/var/run/ca-trust/tls-ca-bundle.pem")
+		if err != nil {
+			return fmt.Errorf("unable to read ocm CA trust bundle file: %w", err)
+		}
+	} else if err != nil && errors.Is(err, os.ErrNotExist) {
+		ocmTrustedCABundle, err = ioutil.ReadFile("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem")
+		if err != nil {
+			return fmt.Errorf("unable to read ocm CA trust bundle file: %w", err)
+		}
+	} else {
+		return err
+	}
+
+	if _, err := trustedCABundle.Write(ocmTrustedCABundle); err != nil {
+		return fmt.Errorf("unable to write ocm CA trust bundle to buffer: %w", err)
+	}
+
+	if mgmtClusterCaps.Has(capabilities.CapabilityImage) {
+		// Adds user-specified image registry CA bundle to the full CA trust bundle if it exists
+		imageRegistryCABundle, err := getImageRegistryCABundle(ctx, client)
+		if err != nil {
+			return fmt.Errorf("unable to get CA bundle for image mirror registries: %w", err)
+		}
+		if imageRegistryCABundle != nil {
+			if _, err := trustedCABundle.Write(imageRegistryCABundle.Bytes()); err != nil {
+				return fmt.Errorf("unable to write image registry CA to buffer: %w", err)
+			}
+		}
+	}
+
+	if err := ioutil.WriteFile("/trust-bundle/tls-ca-bundle.pem", trustedCABundle.Bytes(), 0644); err != nil {
+		return err
+	}
+
+	log.Info("Finished initializing environment for Hypershift Operator")
+	return nil
+}
+
+// getMgmtClusterCapabilities initializes the ManagementClusterCabilities object
+// to determine if the management cluster has the listed capabilities
+func getMgmtClusterCapabilities() (*capabilities.ManagementClusterCapabilities, error) {
+	config, err := util.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("unable to get kubernetes config: %w", err)
+	}
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get discovery client: %w", err)
+	}
+	return capabilities.DetectManagementClusterCapabilities(discoveryClient)
+}
+
+// getImageRegistryCABundle retrieves the image registry CAs listed under image.config.openshift.io
+// and merges them into one CA bundle
+func getImageRegistryCABundle(ctx context.Context, client crclient.Client) (*bytes.Buffer, error) {
+	img := &configapi.Image{}
+	if err := client.Get(ctx, types.NamespacedName{Name: "cluster"}, img); err != nil {
+		return nil, err
+	}
+	if img == nil || img.Spec.AdditionalTrustedCA.Name == "" {
+		return nil, nil
+	}
+	configmap := &corev1.ConfigMap{}
+	if err := client.Get(ctx, types.NamespacedName{Name: img.Spec.AdditionalTrustedCA.Name, Namespace: "openshift-config"}, configmap); err != nil {
+		return nil, err
+	}
+	if configmap.Data != nil {
+		// Merge all registry CA certificates together into one bundle
+		var buf bytes.Buffer
+		for _, crt := range configmap.Data {
+			buf.WriteString(crt)
+		}
+		if buf.Len() > 0 {
+			return &buf, nil
+		}
+	}
+	return nil, nil
 }
