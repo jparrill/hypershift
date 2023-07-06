@@ -296,7 +296,7 @@ func TestIsIPv4(t *testing.T) {
 	}
 }
 
-func TestGetFirstUsableIP(t *testing.T) {
+func TestFirstUsableIP(t *testing.T) {
 	tests := []struct {
 		name    string
 		cidr    string
@@ -330,13 +330,13 @@ func TestGetFirstUsableIP(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := GetFirstUsableIP(tt.cidr)
+			got, err := FirstUsableIP(tt.cidr)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetFirstUsableIP() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("FirstUsableIP() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.want {
-				t.Errorf("GetFirstUsableIP() = %v, want %v", got, tt.want)
+				t.Errorf("FirstUsableIP() = %v, want %v", got, tt.want)
 			}
 		})
 	}

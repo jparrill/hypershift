@@ -618,7 +618,7 @@ type APIServerNetworking struct {
 	// AdvertiseAddress is the address that nodes will use to talk to the API
 	// server. This is an address associated with the loopback adapter of each
 	// node. If not specified, the controller will take default values.
-	// The default values will be set 172.20.0.1 or/and fd00::1.
+	// The default values will be set as 172.20.0.1 or fd00::1.
 	AdvertiseAddress *string `json:"advertiseAddress,omitempty"`
 
 	// AdvertiseAddresses are the addresses that nodes will use to talk to the API

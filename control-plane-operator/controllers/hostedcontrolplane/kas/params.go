@@ -104,12 +104,7 @@ func NewKubeAPIServerParams(ctx context.Context, hcp *hyperv1.HostedControlPlane
 		params.Scheduler = hcp.Spec.Configuration.Scheduler
 	}
 
-	defaultAddresses := &util.DefaultAdvIps{
-		IPv4: config.DefaultAdvertiseIPv4Address,
-		IPv6: config.DefaultAdvertiseIPv6Address,
-	}
-
-	params.AdvertiseAddress = util.SetAdvertiseAddress(hcp, defaultAddresses)
+	params.AdvertiseAddress = util.GetAdvertiseAddress(hcp, config.DefaultAdvertiseIPv4Address, config.DefaultAdvertiseIPv6Address)
 
 	params.APIServerPort = util.BindAPIPortWithDefault(hcp, config.DefaultAPIServerPort)
 	if _, ok := hcp.Annotations[hyperv1.PortierisImageAnnotation]; ok {

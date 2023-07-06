@@ -28,7 +28,7 @@ func ReconcileKASServerCertSecret(secret, ca *corev1.Secret, ownerRef config.Own
 	svcAddresses := make([]string, 0)
 
 	for _, serviceCIDR := range serviceCIDRs {
-		serviceIP, err := util.GetFirstUsableIP(serviceCIDR)
+		serviceIP, err := util.FirstUsableIP(serviceCIDR)
 		if err != nil {
 			return fmt.Errorf("cannot get the first usable IP from CIDR %s: %w", serviceIP, err)
 		}

@@ -129,28 +129,19 @@ func AllowedCIDRBlocks(hcp *hyperv1.HostedControlPlane) []hyperv1.CIDRBlock {
 	return nil
 }
 
-func SetAdvertiseAddress(hcp *hyperv1.HostedControlPlane, defaults *DefaultAdvIps) string {
-	var address string
+func GetAdvertiseAddress(hcp *hyperv1.HostedControlPlane, ipv4DefaultAddress, ipv6DefaultAddress string) string {
+	var advertiseAddress string
 
-	// User defined AdvertiseAddress
-	if address := AdvertiseAddress(hcp); address != nil {
-		return *address
-	}
-
-	// If there is not any defined AdvertiseAddress we should default them.
-	if len(address) <= 1 {
-		ipv4, err := IsIPv4(hcp.Spec.Networking.ServiceNetwork[0].CIDR.String())
-		if err != nil {
-			// if there is an error validating the ServiceNetworkCIDR we use the IPv4 default ip
-			return defaults.IPv4
+	ipv4, err := IsIPv4(hcp.Spec.Networking.ServiceNetwork[0].CIDR.String())
+	if err != nil || ipv4 {
+		if address := AdvertiseAddressWithDefault(hcp, ipv4DefaultAddress); len(address) > 0 {
+			advertiseAddress = address
 		}
-
-		if ipv4 {
-			address = defaults.IPv4
-		} else {
-			address = defaults.IPv6
+	} else {
+		if address := AdvertiseAddressWithDefault(hcp, ipv6DefaultAddress); len(address) > 0 {
+			advertiseAddress = address
 		}
 	}
 
-	return address
+	return advertiseAddress
 }

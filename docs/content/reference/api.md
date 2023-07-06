@@ -832,7 +832,7 @@ string
 <p>AdvertiseAddress is the address that nodes will use to talk to the API
 server. This is an address associated with the loopback adapter of each
 node. If not specified, the controller will take default values.
-The default values will be set 172.20.0.1 or/and fd00::1.</p>
+The default values will be set as 172.20.0.1 or fd00::1.</p>
 </td>
 </tr>
 <tr>
