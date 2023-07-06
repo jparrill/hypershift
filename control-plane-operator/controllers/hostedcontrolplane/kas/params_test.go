@@ -2,7 +2,6 @@ package kas
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	. "github.com/onsi/gomega"
@@ -20,7 +19,7 @@ func TestNewAPIServerParamsAPIAdvertiseAddressAndPort(t *testing.T) {
 	tests := []struct {
 		apiServiceMapping  hyperv1.ServicePublishingStrategyMapping
 		name               string
-		advertiseAddress   *string
+		advertiseAddress   string
 		serviceNetworkCIDR string
 		port               *int32
 		expectedAddress    string
@@ -34,7 +33,7 @@ func TestNewAPIServerParamsAPIAdvertiseAddressAndPort(t *testing.T) {
 		},
 		{
 			name:               "address specified",
-			advertiseAddress:   pointer.String("1.2.3.4"),
+			advertiseAddress:   "1.2.3.4",
 			serviceNetworkCIDR: "10.0.0.0/24",
 			expectedAddress:    "1.2.3.4",
 			expectedPort:       config.DefaultAPIServerPort,
@@ -70,10 +69,11 @@ func TestNewAPIServerParamsAPIAdvertiseAddressAndPort(t *testing.T) {
 			ipnet, err := ipnet.ParseCIDR(test.serviceNetworkCIDR)
 			g.Expect(err).NotTo(HaveOccurred(), "error parsing ServiceNetworkCIDR")
 			hcp.Spec.Networking.ServiceNetwork = append(hcp.Spec.Networking.ServiceNetwork, hyperv1.ServiceNetworkEntry{CIDR: *ipnet})
-			hcp.Spec.Networking.APIServer = &hyperv1.APIServerNetworking{Port: test.port, AdvertiseAddress: test.advertiseAddress}
+			hcp.Spec.Networking.APIServer = &hyperv1.APIServerNetworking{Port: test.port, AdvertiseAddress: pointer.String(test.advertiseAddress)}
 			p := NewKubeAPIServerParams(context.Background(), hcp, imageProvider, "", 0, "", 0, false)
-			fmt.Println(p)
-			g.Expect(p.AdvertiseAddress[0]).To(Equal(test.expectedAddress))
+			if len(p.AdvertiseAddress) > 0 {
+				g.Expect(p.AdvertiseAddress).To(Equal(test.expectedAddress))
+			}
 			g.Expect(p.APIServerPort).To(Equal(test.expectedPort))
 		})
 	}

@@ -133,7 +133,7 @@ func generateConfig(p KubeAPIServerConfigParams, version semver.Version) *kcpv1.
 		ServicesSubnet:               strings.Join(p.ServiceNetwork, ","),
 	}
 	args := kubeAPIServerArgs{}
-	args.Set("advertise-address", p.AdvertiseAddress...)
+	args.Set("advertise-address", p.AdvertiseAddress)
 	args.Set("allow-privileged", "true")
 	args.Set("anonymous-auth", "true")
 	args.Set("api-audiences", p.ServiceAccountIssuerURL)

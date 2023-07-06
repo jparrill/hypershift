@@ -831,9 +831,8 @@ string
 <td>
 <p>AdvertiseAddress is the address that nodes will use to talk to the API
 server. This is an address associated with the loopback adapter of each
-node. If not specified, the controller will look for the first IP on each
-CIDR (IPv4 and IPv6). If the controller cannot infer the first IP of the CIDR,
-the default values will be set 172.20.0.1 or/and fd00::1.</p>
+node. If not specified, the controller will take default values.
+The default values will be set 172.20.0.1 or/and fd00::1.</p>
 </td>
 </tr>
 <tr>

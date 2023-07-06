@@ -265,7 +265,7 @@ func IsIPv4(cidr string) (bool, error) {
 func GetFirstUsableIP(cidr string) (string, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return "", fmt.Errorf("error validating the incoming CIDR %s: %v", cidr, err)
+		return "", fmt.Errorf("error validating the incoming CIDR %s: %w", cidr, err)
 	}
 
 	// If we receive a CIDR which is not a network address

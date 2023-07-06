@@ -1,8 +1,6 @@
 package util
 
 import (
-	"fmt"
-
 	hyperv1 "github.com/openshift/hypershift/api/v1beta1"
 )
 
@@ -131,55 +129,28 @@ func AllowedCIDRBlocks(hcp *hyperv1.HostedControlPlane) []hyperv1.CIDRBlock {
 	return nil
 }
 
-func SetAdvertiseAddresses(hcp *hyperv1.HostedControlPlane, defaults *DefaultAdvIps) []string {
-	addresses := make([]string, 0)
+func SetAdvertiseAddress(hcp *hyperv1.HostedControlPlane, defaults *DefaultAdvIps) string {
+	var address string
 
-	// User defined AdvertiseAddress/AdvertiseAddresses
-	if hcpAdvAddresses := AdvertiseAddresses(hcp); hcpAdvAddresses != nil {
-		fmt.Println("AdvertiseAddresses found:", hcpAdvAddresses)
-		addresses = hcpAdvAddresses
-	}
-
-	if hcpAdvAddress := AdvertiseAddress(hcp); hcpAdvAddress != nil {
-		fmt.Println("AdvertiseAddress found:", hcpAdvAddress)
-		addresses = append(addresses, *hcpAdvAddress)
+	// User defined AdvertiseAddress
+	if address := AdvertiseAddress(hcp); address != nil {
+		return *address
 	}
 
 	// If there is not any defined AdvertiseAddress we should default them.
-	if len(addresses) == 0 {
-		fmt.Println("AdvertiseAddress or AdvertiseAddresses not found in hcp, using default values")
+	if len(address) <= 1 {
 		ipv4, err := IsIPv4(hcp.Spec.Networking.ServiceNetwork[0].CIDR.String())
 		if err != nil {
 			// if there is an error validating the ServiceNetworkCIDR we use the IPv4 default ip
-			fmt.Printf("error checking the ServiceNetworkCIDRs: %v", err)
-			return []string{defaults.IPv4}
+			return defaults.IPv4
 		}
 
 		if ipv4 {
-			addresses = append(addresses, defaults.IPv4)
+			address = defaults.IPv4
 		} else {
-			addresses = append(addresses, defaults.IPv6)
+			address = defaults.IPv6
 		}
 	}
 
-	// Clean duplicates from the slice
-	// todo (jparrill): Uncomment this and return the final list,
-	// once the issue https://github.com/kubernetes/enhancements/issues/2438 gets solved
-	//finalList := RemoveDuplicatesFromList(addresses)
-
-	return addresses
-}
-
-func RemoveDuplicatesFromList(addresses []string) []string {
-	uniqueMap := make(map[string]bool)
-	uniqueSlice := make([]string, 0)
-
-	for _, item := range addresses {
-		if !uniqueMap[item] {
-			uniqueMap[item] = true
-			uniqueSlice = append(uniqueSlice, item)
-		}
-	}
-
-	return uniqueSlice
+	return address
 }
