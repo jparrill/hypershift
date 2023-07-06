@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/blang/semver"
 	hyperv1 "github.com/openshift/hypershift/api/v1beta1"
@@ -129,10 +130,10 @@ func generateConfig(p KubeAPIServerConfigParams, version semver.Version) *kcpv1.
 		ImagePolicyConfig:            imagePolicyConfig(p.InternalRegistryHostName, p.ExternalRegistryHostNames),
 		ProjectConfig:                projectConfig(p.DefaultNodeSelector),
 		ServiceAccountPublicKeyFiles: []string{cpath(kasVolumeServiceAccountKey().Name, pki.ServiceSignerPublicKey)},
-		ServicesSubnet:               p.ServiceNetwork[0],
+		ServicesSubnet:               strings.Join(p.ServiceNetwork, ","),
 	}
 	args := kubeAPIServerArgs{}
-	args.Set("advertise-address", p.AdvertiseAddress)
+	args.Set("advertise-address", p.AdvertiseAddress...)
 	args.Set("allow-privileged", "true")
 	args.Set("anonymous-auth", "true")
 	args.Set("api-audiences", p.ServiceAccountIssuerURL)

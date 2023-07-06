@@ -73,6 +73,11 @@ func (in *APIServerNetworking) DeepCopyInto(out *APIServerNetworking) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.AdvertiseAddresses != nil {
+		in, out := &in.AdvertiseAddresses, &out.AdvertiseAddresses
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Port != nil {
 		in, out := &in.Port, &out.Port
 		*out = new(int32)

@@ -613,11 +613,21 @@ type CIDRBlock string
 
 // APIServerNetworking specifies how the APIServer is exposed inside a cluster
 // node.
+// +kubebuilder:validation:XValidation:rule="(has(self.advertiseAddress) && self.advertiseAddresses.size() == 0) || (!has(self.advertiseAddress) && self.advertiseAddresses.size() > 0)", message="AdvertiseAddress and AdvertiseAddresses are exclusive between themselves"
 type APIServerNetworking struct {
 	// AdvertiseAddress is the address that nodes will use to talk to the API
 	// server. This is an address associated with the loopback adapter of each
-	// node. If not specified, 172.20.0.1 is used.
+	// node. If not specified, the controller will look for the first IP on each
+	// CIDR (IPv4 and IPv6). If the controller cannot infer the first IP of the CIDR,
+	// the default values will be set 172.20.0.1 or/and fd00::1.
 	AdvertiseAddress *string `json:"advertiseAddress,omitempty"`
+
+	// AdvertiseAddresses are the addresses that nodes will use to talk to the API
+	// server. These are one or more addresses associated with the loopback adapter of each
+	// node. If not specified, the controller will look for the first IP on each CIDR (IPv4 and IPv6).
+	// If the controller cannot infer the first IP of the CIDR, the default values will be set 172.20.0.1 or/and fd00::1.
+	// This variable differs from the above one because this will be used in dual stack scenarios.
+	AdvertiseAddresses []string `json:"advertiseAddresses,omitempty"`
 
 	// Port is the port at which the APIServer is exposed inside a node. Other
 	// pods using host networking cannot listen on this port. If not specified,
