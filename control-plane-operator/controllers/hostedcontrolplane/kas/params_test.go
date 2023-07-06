@@ -24,7 +24,7 @@ func TestNewAPIServerParamsAPIAdvertiseAddressAndPort(t *testing.T) {
 	}{
 		{
 			name:            "not specified",
-			expectedAddress: config.DefaultAdvertiseAddress,
+			expectedAddress: config.DefaultAdvertiseIPv4Address,
 			expectedPort:    config.DefaultAPIServerPort,
 		},
 		{
@@ -35,8 +35,8 @@ func TestNewAPIServerParamsAPIAdvertiseAddressAndPort(t *testing.T) {
 		},
 		{
 			name:            "port set for default service publishing strategies",
-			port:            pointer.Int32Ptr(6789),
-			expectedAddress: config.DefaultAdvertiseAddress,
+			port:            pointer.Int32(6789),
+			expectedAddress: config.DefaultAdvertiseIPv4Address,
 			expectedPort:    config.DefaultAPIServerPort,
 		},
 		{
@@ -47,8 +47,8 @@ func TestNewAPIServerParamsAPIAdvertiseAddressAndPort(t *testing.T) {
 					Type: hyperv1.NodePort,
 				},
 			},
-			port:            pointer.Int32Ptr(6789),
-			expectedAddress: config.DefaultAdvertiseAddress,
+			port:            pointer.Int32(6789),
+			expectedAddress: config.DefaultAdvertiseIPv4Address,
 			expectedPort:    6789,
 		},
 	}

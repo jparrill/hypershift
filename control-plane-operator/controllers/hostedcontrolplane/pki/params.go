@@ -32,7 +32,7 @@ type PKIParams struct {
 	ExternalKconnectivityAddress string `json:"externalKconnectivityAddress"`
 
 	// NodeInternalAPIServerIP
-	// A fixed IP that pods on worker nodes will use to communicate with the API server - 172.20.0.1
+	// A fixed IP that pods on worker nodes will use to communicate with the API server - 172.20.0.1 for IPv4 and fd02::1 in IPv6 case
 	NodeInternalAPIServerIP string `json:"nodeInternalAPIServerIP"`
 
 	// ExternalOauthAddress
@@ -65,6 +65,20 @@ func NewPKIParams(hcp *hyperv1.HostedControlPlane,
 		IngressSubdomain:             globalconfig.IngressDomain(hcp),
 		OwnerRef:                     config.OwnerRefFrom(hcp),
 	}
-	p.NodeInternalAPIServerIP = util.AdvertiseAddressWithDefault(hcp, config.DefaultAdvertiseAddress)
+
+	// ToDo (jparrill): When we support more than 1 ServiceNetwork for PKI we need to move from using
+	// util.AdvertiseAddressWithDefault to util.SetAdvertiseAddresses where we cover dual stack stuff
+
+	ipv4, err := util.IsIPv4(p.ServiceCIDR)
+	if err != nil {
+		fmt.Printf("error checking the ServiceNetworkCIDRs: %v", err)
+	}
+
+	// Set the default
+	if ipv4 {
+		p.NodeInternalAPIServerIP = util.AdvertiseAddressWithDefault(hcp, config.DefaultAdvertiseIPv4Address)
+	} else {
+		p.NodeInternalAPIServerIP = util.AdvertiseAddressWithDefault(hcp, config.DefaultAdvertiseIPv6Address)
+	}
 	return p
 }

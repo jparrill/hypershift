@@ -817,7 +817,22 @@ string
 <td>
 <p>AdvertiseAddress is the address that nodes will use to talk to the API
 server. This is an address associated with the loopback adapter of each
-node. If not specified, 172.20.0.1 is used.</p>
+node. If not specified, 172.20.0.1 or fd02::1 are used.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>advertiseAddresses</code></br>
+<em>
+[]string
+</em>
+</td>
+<td>
+<p>AdvertiseAddresses are the addresses that nodes will use to talk to the API
+server. These are one or more addresses associated with the loopback adapter of each
+node. If not specified, 172.20.0.1 or/and fd02::1 are used.
+This variable differs from the above one because this will be used in dual stak scenarios.
+NOTE: Both of them could be used at the same time and the controller will take care of them</p>
 </td>
 </tr>
 <tr>

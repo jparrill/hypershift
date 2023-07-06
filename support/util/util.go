@@ -9,9 +9,11 @@ import (
 	"hash/fnv"
 	"io"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
+	hyperv1 "github.com/openshift/hypershift/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -174,4 +176,108 @@ func HashStruct(o interface{}) string {
 	hash.Write([]byte(fmt.Sprintf("%v", o)))
 	intHash := hash.Sum32()
 	return fmt.Sprintf("%08x", intHash)
+}
+
+// ConvertRegistryOverridesToCommandLineFlag converts a map of registry sources and their mirrors into a string
+func ConvertRegistryOverridesToCommandLineFlag(registryOverrides map[string]string) string {
+	var commandLineFlagArray []string
+	for registrySource, registryReplacement := range registryOverrides {
+		commandLineFlagArray = append(commandLineFlagArray, fmt.Sprintf("%s=%s", registrySource, registryReplacement))
+	}
+	if len(commandLineFlagArray) > 0 {
+		sort.Strings(commandLineFlagArray)
+		return strings.Join(commandLineFlagArray, ",")
+	}
+	// this is the equivalent of null on a StringToString command line variable.
+	return "="
+}
+
+// ConvertOpenShiftImageRegistryOverridesToCommandLineFlag converts a map of image registry sources and their mirrors into a string
+func ConvertOpenShiftImageRegistryOverridesToCommandLineFlag(registryOverrides map[string][]string) string {
+	var commandLineFlagArray []string
+	for registrySource, registryReplacements := range registryOverrides {
+		for _, registryReplacement := range registryReplacements {
+			commandLineFlagArray = append(commandLineFlagArray, fmt.Sprintf("%s=%s", registrySource, registryReplacement))
+		}
+	}
+	if len(commandLineFlagArray) > 0 {
+		sort.Strings(commandLineFlagArray)
+		return strings.Join(commandLineFlagArray, ",")
+	}
+	// this is the equivalent of null on a StringToString command line variable.
+	return "="
+}
+
+// ConvertImageRegistryOverrideStringToMap translates the environment variable containing registry source to mirror
+// mappings back to a map[string]string structure that can be ingested by the registry image content policies release provider
+func ConvertImageRegistryOverrideStringToMap(envVar string) map[string][]string {
+	registryMirrorPair := strings.Split(envVar, ",")
+
+	if len(registryMirrorPair) == 0 || envVar == "=" {
+		return nil
+	}
+
+	imageRegistryOverrides := make(map[string][]string)
+
+	for _, pair := range registryMirrorPair {
+		registryMirror := strings.Split(pair, "=")
+		registry := registryMirror[0]
+		mirror := registryMirror[1]
+
+		if _, ok := imageRegistryOverrides[registry]; ok {
+			imageRegistryOverrides[registry] = append(imageRegistryOverrides[registry], mirror)
+		} else {
+			imageRegistryOverrides[registry] = []string{mirror}
+		}
+	}
+
+	return imageRegistryOverrides
+}
+
+// IsIPv4 function parse the CIDR and get the IPNet struct if the IPNet.IP cannot be converted to 4bytes format,
+// the function returns nil, if it's an IPv6 it will return nil.
+func IsIPv4(cidr string) (bool, error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return false, fmt.Errorf("error validating the ClusterNetworkCIDR from HostedCluster: %v", err)
+	}
+
+	if ipnet.IP.To4() != nil {
+		return true, nil
+	} else {
+		return false, nil
+	}
+}
+
+// GetDefaultIpsForSvcNets return the default IPs of the serviceNetwork associated to the hcp
+// it covers Single and Dual stack. This will include 172.20.0.1 as a first IPv4 in the range
+// in case of IPv6 this other one will be included fd02::1"
+func GetDefaultIpsForSvcNets(svcNets []hyperv1.ServiceNetworkEntry, defaults *DefaultAdvIps) []string {
+	addresses := make([]string, 0)
+
+	for _, svcNet := range svcNets {
+		ipv4, err := IsIPv4(svcNet.CIDR.String())
+		if err != nil {
+			fmt.Printf("error checking the ServiceNetworkCIDRs: %v", err)
+			continue
+		}
+
+		if ipv4 {
+			addresses = append(addresses, defaults.IPv4)
+		} else {
+			addresses = append(addresses, defaults.IPv6)
+		}
+	}
+
+	// I cannot think in a scenario where the serviceNetworks are not rightly parseable
+	// but as a secure measure, if there is not any stored addresses at this point, we set
+	// IPv4 as a default one.
+	if len(addresses) == 0 {
+		fmt.Println("error parsing defined ServiceNetworkEntries, defaulting AdvertiseAddress to IPv4:", defaults.IPv4)
+		addresses = append(addresses, defaults.IPv4)
+	}
+
+	finalList := RemoveDuplicatesFromList(addresses)
+
+	return finalList
 }

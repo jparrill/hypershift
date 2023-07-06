@@ -5778,8 +5778,20 @@ spec:
                         description: AdvertiseAddress is the address that nodes will
                           use to talk to the API server. This is an address associated
                           with the loopback adapter of each node. If not specified,
-                          172.20.0.1 is used.
+                          172.20.0.1 or fd02::1 are used.
                         type: string
+                      advertiseAddresses:
+                        description: 'AdvertiseAddresses are the addresses that nodes
+                          will use to talk to the API server. These are one or more
+                          addresses associated with the loopback adapter of each node.
+                          If not specified, 172.20.0.1 or/and fd02::1 are used. This
+                          variable differs from the above one because this will be
+                          used in dual stak scenarios. NOTE: Both of them could be
+                          used at the same time and the controller will take care
+                          of them'
+                        items:
+                          type: string
+                        type: array
                       allowedCIDRBlocks:
                         description: AllowedCIDRBlocks is an allow list of CIDR blocks
                           that can access the APIServer If not specified, traffic
@@ -5796,6 +5808,12 @@ spec:
                         format: int32
                         type: integer
                     type: object
+                    x-kubernetes-validations:
+                    - message: AdvertiseAddress and AdvertiseAddresses are exclusive
+                        between themselves
+                      rule: (has(self.advertiseAddress) && self.advertiseAddresses.size
+                        == 0) || (!has(self.advertiseAddress) && self.advertiseAddresses.size
+                        > 0)
                   clusterNetwork:
                     description: ClusterNetwork is the list of IP address pools for
                       pods.

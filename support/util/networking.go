@@ -1,6 +1,8 @@
 package util
 
 import (
+	"fmt"
+
 	hyperv1 "github.com/openshift/hypershift/api/v1beta1"
 )
 
@@ -108,6 +110,13 @@ func AdvertiseAddress(hcp *hyperv1.HostedControlPlane) *string {
 	return nil
 }
 
+func AdvertiseAddresses(hcp *hyperv1.HostedControlPlane) []string {
+	if hcp != nil && hcp.Spec.Networking.APIServer != nil {
+		return hcp.Spec.Networking.APIServer.AdvertiseAddresses
+	}
+	return nil
+}
+
 func AdvertiseAddressWithDefault(hcp *hyperv1.HostedControlPlane, defaultValue string) string {
 	if address := AdvertiseAddress(hcp); address != nil {
 		return *address
@@ -120,4 +129,42 @@ func AllowedCIDRBlocks(hcp *hyperv1.HostedControlPlane) []hyperv1.CIDRBlock {
 		return hcp.Spec.Networking.APIServer.AllowedCIDRBlocks
 	}
 	return nil
+}
+
+func SetAdvertiseAddresses(hcp *hyperv1.HostedControlPlane, defaults *DefaultAdvIps) []string {
+	addresses := make([]string, 0)
+
+	// User defined AdvertiseAddress/AdvertiseAddresses
+	if hcpAdvAddresses := AdvertiseAddresses(hcp); hcpAdvAddresses != nil {
+		fmt.Println("AdvertiseAddresses found:", hcpAdvAddresses)
+		addresses = hcpAdvAddresses
+	}
+
+	if hcpAdvAddress := AdvertiseAddress(hcp); hcpAdvAddress != nil {
+		fmt.Println("AdvertiseAddress found:", hcpAdvAddress)
+		addresses = append(addresses, *hcpAdvAddress)
+	}
+
+	// If there is not any defined AdvertiseAddress we should default them.
+	if len(addresses) == 0 {
+		fmt.Println("AdvertiseAddress or AdvertiseAddresses not found in hcp, using default values")
+		addresses = GetDefaultIpsForSvcNets(hcp.Spec.Networking.ServiceNetwork, defaults)
+	}
+
+	// Clean duplicates from the slice
+	finalList := RemoveDuplicatesFromList(addresses)
+
+	return finalList
+}
+
+func RemoveDuplicatesFromList(addresses []string) []string {
+	allAddrs := make(map[string]bool)
+	list := make([]string, 0)
+	for _, item := range addresses {
+		if _, exists := allAddrs[item]; !exists {
+			allAddrs[item] = true
+			list = append(list, item)
+		}
+	}
+	return list
 }

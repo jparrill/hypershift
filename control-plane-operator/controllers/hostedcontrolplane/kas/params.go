@@ -42,7 +42,7 @@ type KubeAPIServerParams struct {
 	ServiceAccountIssuer string                       `json:"serviceAccountIssuer"`
 	ServiceCIDRs         []string                     `json:"serviceCIDRs"`
 	ClusterCIDRs         []string                     `json:"clusterCIDRs"`
-	AdvertiseAddress     string                       `json:"advertiseAddress"`
+	AdvertiseAddress     []string                     `json:"advertiseAddress"`
 	ExternalAddress      string                       `json:"externalAddress"`
 	ExternalPort         int32                        `json:"externalPort"`
 	InternalAddress      string                       `json:"internalAddress"`
@@ -103,7 +103,14 @@ func NewKubeAPIServerParams(ctx context.Context, hcp *hyperv1.HostedControlPlane
 		params.Image = hcp.Spec.Configuration.Image
 		params.Scheduler = hcp.Spec.Configuration.Scheduler
 	}
-	params.AdvertiseAddress = util.AdvertiseAddressWithDefault(hcp, config.DefaultAdvertiseAddress)
+
+	defaultAddresses := &util.DefaultAdvIps{
+		IPv4: config.DefaultAdvertiseIPv4Address,
+		IPv6: config.DefaultAdvertiseIPv6Address,
+	}
+
+	params.AdvertiseAddress = util.SetAdvertiseAddresses(hcp, defaultAddresses)
+
 	params.APIServerPort = util.BindAPIPortWithDefault(hcp, config.DefaultAPIServerPort)
 	if _, ok := hcp.Annotations[hyperv1.PortierisImageAnnotation]; ok {
 		params.Images.Portieris = hcp.Annotations[hyperv1.PortierisImageAnnotation]
@@ -389,7 +396,7 @@ type KubeAPIServerConfigParams struct {
 	InternalRegistryHostName     string
 	ExternalRegistryHostNames    []string
 	DefaultNodeSelector          string
-	AdvertiseAddress             string
+	AdvertiseAddress             []string
 	ServiceAccountIssuerURL      string
 	CloudProvider                string
 	CloudProviderConfigRef       *corev1.LocalObjectReference
