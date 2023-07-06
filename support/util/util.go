@@ -251,7 +251,11 @@ func ConvertImageRegistryOverrideStringToMap(envVar string) map[string][]string 
 func IsIPv4(cidr string) (bool, error) {
 	_, ipnet, err := net.ParseCIDR(cidr)
 	if err != nil {
+<<<<<<< HEAD
 		return false, fmt.Errorf("error validating the incoming CIDR %s: %v", cidr, err)
+=======
+		return false, fmt.Errorf("error validating the ClusterNetworkCIDR from HostedCluster: %v", err)
+>>>>>>> 403bda49b (OCPBUGS-15331: Enables AdvertiseAddress dual stack and IPv6 support)
 	}
 
 	if ipnet.IP.To4() != nil {
