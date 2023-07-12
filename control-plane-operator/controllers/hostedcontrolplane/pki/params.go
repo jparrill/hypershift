@@ -95,5 +95,6 @@ func NewPKIParams(hcp *hyperv1.HostedControlPlane,
 	} else {
 		p.NodeInternalAPIServerIP = util.AdvertiseAddressWithDefault(hcp, config.DefaultAdvertiseIPv6Address)
 	}
+
 	return p
 }
