@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	hyperv1 "github.com/openshift/hypershift/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -249,35 +248,22 @@ func IsIPv4(cidr string) (bool, error) {
 	}
 }
 
-// GetDefaultIpsForSvcNets return the default IPs of the serviceNetwork associated to the hcp
-// it covers Single and Dual stack. This will include 172.20.0.1 as a first IPv4 in the range
-// in case of IPv6 this other one will be included fd02::1"
-func GetDefaultIpsForSvcNets(svcNets []hyperv1.ServiceNetworkEntry, defaults *DefaultAdvIps) []string {
-	addresses := make([]string, 0)
-
-	for _, svcNet := range svcNets {
-		ipv4, err := IsIPv4(svcNet.CIDR.String())
-		if err != nil {
-			fmt.Printf("error checking the ServiceNetworkCIDRs: %v", err)
-			continue
-		}
-
-		if ipv4 {
-			addresses = append(addresses, defaults.IPv4)
-		} else {
-			addresses = append(addresses, defaults.IPv6)
-		}
+// GetFirstUsableIP returns the first usable IP in both, IPv4 and IPv6 stacks.
+func GetFirstUsableIP(cidr string) (string, error) {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", fmt.Errorf("error parsing CIDR %s in order to get the first usable IP: %v", cidr, err)
 	}
 
-	// I cannot think in a scenario where the serviceNetworks are not rightly parseable
-	// but as a secure measure, if there is not any stored addresses at this point, we set
-	// IPv4 as a default one.
-	if len(addresses) == 0 {
-		fmt.Println("error parsing defined ServiceNetworkEntries, defaulting AdvertiseAddress to IPv4:", defaults.IPv4)
-		addresses = append(addresses, defaults.IPv4)
+	// If we receive a CIDR which is not a network address
+	ip := ipNet.IP
+	if ip.To4() != nil {
+		// IPv4
+		ip[net.IPv4len-1]++
+	} else {
+		// IPv6
+		ip[len(ip)-1]++
 	}
 
-	finalList := RemoveDuplicatesFromList(addresses)
-
-	return finalList
+	return ip.String(), nil
 }

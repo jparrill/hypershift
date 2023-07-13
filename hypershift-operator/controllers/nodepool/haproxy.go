@@ -100,20 +100,16 @@ func (r *NodePoolReconciler) reconcileHAProxyIgnitionConfig(ctx context.Context,
 	}
 
 	// This give support for HTTP Proxy on IPv6 scenarios
-	svcCIDR := util.FirstServiceCIDR(hcluster.Spec.Networking.ServiceNetwork)
-	ipv4, err := util.IsIPv4(svcCIDR)
+	ipv4, err := util.IsIPv4(hcluster.Spec.Networking.ServiceNetwork[0].CIDR.String())
 	if err != nil {
-		return "", true, fmt.Errorf("error checking the ServiceNetworkCIDRs: %v", err)
+		return "", true, fmt.Errorf("error checking the stack in the first ServiceNetworkCIDR %s: %w", hcluster.Spec.Networking.ServiceNetwork[0].CIDR.String(), err)
 	}
 
+	// Set the default
 	if ipv4 {
 		apiServerInternalAddress = config.DefaultAdvertiseIPv4Address
 	} else {
 		apiServerInternalAddress = config.DefaultAdvertiseIPv6Address
-	}
-
-	if len(apiServerInternalAddress) <= 0 {
-		apiServerInternalAddress = config.DefaultAdvertiseIPv4Address
 	}
 
 	//TODO: in order to prevent periodic kube-apiserver network blimps in the LoadBalancer

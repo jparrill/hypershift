@@ -16,7 +16,7 @@ const (
 	DefaultServiceAccountIssuer  = "https://kubernetes.default.svc"
 	DefaultImageRegistryHostname = "image-registry.openshift-image-registry.svc:5000"
 	DefaultAdvertiseIPv4Address  = "172.20.0.1"
-	DefaultAdvertiseIPv6Address  = "fd02::1"
+	DefaultAdvertiseIPv6Address  = "fd00::1"
 	DefaultEtcdURL               = "https://etcd-client:2379"
 	DefaultAPIServerPort         = 6443
 	DefaultServiceNodePortRange  = "30000-32767"

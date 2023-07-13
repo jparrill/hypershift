@@ -148,7 +148,16 @@ func SetAdvertiseAddresses(hcp *hyperv1.HostedControlPlane, defaults *DefaultAdv
 	// If there is not any defined AdvertiseAddress we should default them.
 	if len(addresses) == 0 {
 		fmt.Println("AdvertiseAddress or AdvertiseAddresses not found in hcp, using default values")
-		addresses = GetDefaultIpsForSvcNets(hcp.Spec.Networking.ServiceNetwork, defaults)
+
+		ipv4, err := IsIPv4(hcp.Spec.Networking.ServiceNetwork[0].CIDR.String())
+		if err != nil {
+			fmt.Printf("error checking the ServiceNetworkCIDRs: %v", err)
+		}
+		if ipv4 {
+			addresses = append(addresses, defaults.IPv4)
+		} else {
+			addresses = append(addresses, defaults.IPv6)
+		}
 	}
 
 	// Clean duplicates from the slice
@@ -158,13 +167,15 @@ func SetAdvertiseAddresses(hcp *hyperv1.HostedControlPlane, defaults *DefaultAdv
 }
 
 func RemoveDuplicatesFromList(addresses []string) []string {
-	allAddrs := make(map[string]bool)
-	list := make([]string, 0)
+	uniqueMap := make(map[string]bool)
+	uniqueSlice := make([]string, 0)
+
 	for _, item := range addresses {
-		if _, exists := allAddrs[item]; !exists {
-			allAddrs[item] = true
-			list = append(list, item)
+		if !uniqueMap[item] {
+			uniqueMap[item] = true
+			uniqueSlice = append(uniqueSlice, item)
 		}
 	}
-	return list
+
+	return uniqueSlice
 }

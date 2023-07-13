@@ -13,11 +13,11 @@ import (
 type PKIParams struct {
 	// ServiceCIDR
 	// Subnet for cluster services
-	ServiceCIDR string `json:"serviceCIDR"`
+	ServiceCIDR []string `json:"serviceCIDR"`
 
 	// ClusterCIDR
 	// Subnet for pods
-	ClusterCIDR string `json:"clusterCIDR"`
+	ClusterCIDR []string `json:"clusterCIDR"`
 
 	// ExternalAPIAddress
 	// An externally accessible DNS name or IP for the API server. Currently obtained from the load balancer DNS name.
@@ -54,9 +54,22 @@ func NewPKIParams(hcp *hyperv1.HostedControlPlane,
 	apiExternalAddress,
 	oauthExternalAddress,
 	konnectivityExternalAddress string) *PKIParams {
+	svcCIDRs := make([]string, 0)
+	clusterCIDRs := make([]string, 0)
+
+	// Go over all service networks in order to include them in the PKI certificates
+	for _, svcCIDR := range hcp.Spec.Networking.ServiceNetwork {
+		svcCIDRs = append(svcCIDRs, svcCIDR.CIDR.String())
+	}
+
+	// Go over all cluster networks in order to include them in the PKI certificates
+	for _, clusterCIDR := range hcp.Spec.Networking.ClusterNetwork {
+		clusterCIDRs = append(clusterCIDRs, clusterCIDR.CIDR.String())
+	}
+
 	p := &PKIParams{
-		ServiceCIDR:                  util.FirstServiceCIDR(hcp.Spec.Networking.ServiceNetwork),
-		ClusterCIDR:                  util.FirstClusterCIDR(hcp.Spec.Networking.ClusterNetwork),
+		ServiceCIDR:                  svcCIDRs,
+		ClusterCIDR:                  clusterCIDRs,
 		Namespace:                    hcp.Namespace,
 		ExternalAPIAddress:           apiExternalAddress,
 		InternalAPIAddress:           fmt.Sprintf("api.%s.hypershift.local", hcp.Name),
@@ -66,10 +79,7 @@ func NewPKIParams(hcp *hyperv1.HostedControlPlane,
 		OwnerRef:                     config.OwnerRefFrom(hcp),
 	}
 
-	// ToDo (jparrill): When we support more than 1 ServiceNetwork for PKI we need to move from using
-	// util.AdvertiseAddressWithDefault to util.SetAdvertiseAddresses where we cover dual stack stuff
-
-	ipv4, err := util.IsIPv4(p.ServiceCIDR)
+	ipv4, err := util.IsIPv4(p.ServiceCIDR[0])
 	if err != nil {
 		fmt.Printf("error checking the ServiceNetworkCIDRs: %v", err)
 	}
@@ -80,5 +90,6 @@ func NewPKIParams(hcp *hyperv1.HostedControlPlane,
 	} else {
 		p.NodeInternalAPIServerIP = util.AdvertiseAddressWithDefault(hcp, config.DefaultAdvertiseIPv6Address)
 	}
+
 	return p
 }

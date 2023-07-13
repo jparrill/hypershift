@@ -1,13 +1,10 @@
 package util
 
 import (
-	"reflect"
 	"testing"
 	"unicode/utf8"
 
 	. "github.com/onsi/gomega"
-	"github.com/openshift/hypershift/api/util/ipnet"
-	hyperv1 "github.com/openshift/hypershift/api/v1beta1"
 )
 
 func TestCompressDecompress(t *testing.T) {
@@ -49,6 +46,155 @@ func TestCompressDecompress(t *testing.T) {
 				testDecompressFuncErr(t, tc.payload)
 			})
 		}
+	}
+}
+
+func TestConvertRegistryOverridesToCommandLineFlag(t *testing.T) {
+	testCases := []struct {
+		name              string
+		registryOverrides map[string]string
+		expectedFlag      string
+	}{
+		{
+			name:         "No registry overrides",
+			expectedFlag: "=",
+		},
+		{
+			name: "Registry overrides with single mirrors",
+			registryOverrides: map[string]string{
+				"registry1": "mirror1.1",
+				"registry2": "mirror2.1",
+				"registry3": "mirror3.1",
+			},
+			expectedFlag: "registry1=mirror1.1,registry2=mirror2.1,registry3=mirror3.1",
+		},
+	}
+
+	t.Parallel()
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			g := NewGomegaWithT(t)
+
+			result := ConvertRegistryOverridesToCommandLineFlag(testCase.registryOverrides)
+			g.Expect(result).To(Equal(testCase.expectedFlag))
+		})
+	}
+}
+
+func TestConvertOpenShiftImageRegistryOverridesToCommandLineFlag(t *testing.T) {
+	testCases := []struct {
+		name              string
+		registryOverrides map[string][]string
+		expectedFlag      string
+	}{
+		{
+			name:         "No registry overrides",
+			expectedFlag: "=",
+		},
+		{
+			name: "Registry overrides with single mirrors",
+			registryOverrides: map[string][]string{
+				"registry1": {
+					"mirror1.1",
+				},
+				"registry2": {
+					"mirror2.1",
+				},
+				"registry3": {
+					"mirror3.1",
+				},
+			},
+			expectedFlag: "registry1=mirror1.1,registry2=mirror2.1,registry3=mirror3.1",
+		},
+		{
+			name: "Registry overrides with multiple mirrors",
+			registryOverrides: map[string][]string{
+				"registry1": {
+					"mirror1.1",
+					"mirror1.2",
+					"mirror1.3",
+				},
+				"registry2": {
+					"mirror2.1",
+					"mirror2.2",
+				},
+				"registry3": {
+					"mirror3.1",
+				},
+			},
+			expectedFlag: "registry1=mirror1.1,registry1=mirror1.2,registry1=mirror1.3,registry2=mirror2.1,registry2=mirror2.2,registry3=mirror3.1",
+		},
+	}
+
+	t.Parallel()
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			g := NewGomegaWithT(t)
+
+			result := ConvertOpenShiftImageRegistryOverridesToCommandLineFlag(testCase.registryOverrides)
+			g.Expect(result).To(Equal(testCase.expectedFlag))
+		})
+	}
+}
+
+func TestConvertImageRegistryOverrideStringToMap(t *testing.T) {
+	testCases := []struct {
+		name           string
+		expectedOutput map[string][]string
+		input          string
+	}{
+		{
+			name:  "No registry overrides",
+			input: "=",
+			//expectedOutput: make(map[string][]string),
+		},
+		{
+			name: "Registry overrides with single mirrors",
+			expectedOutput: map[string][]string{
+				"registry1": {
+					"mirror1.1",
+				},
+				"registry2": {
+					"mirror2.1",
+				},
+				"registry3": {
+					"mirror3.1",
+				},
+			},
+
+			input: "registry1=mirror1.1,registry2=mirror2.1,registry3=mirror3.1",
+		},
+		{
+			name: "Registry overrides with multiple mirrors",
+			expectedOutput: map[string][]string{
+				"registry1": {
+					"mirror1.1",
+					"mirror1.2",
+					"mirror1.3",
+				},
+				"registry2": {
+					"mirror2.1",
+					"mirror2.2",
+				},
+				"registry3": {
+					"mirror3.1",
+				},
+			},
+			input: "registry1=mirror1.1,registry1=mirror1.2,registry1=mirror1.3,registry2=mirror2.1,registry2=mirror2.2,registry3=mirror3.1",
+		},
+	}
+
+	t.Parallel()
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			g := NewGomegaWithT(t)
+
+			result := ConvertImageRegistryOverrideStringToMap(testCase.input)
+			g.Expect(result).To(Equal(testCase.expectedOutput))
+		})
 	}
 }
 
@@ -150,110 +296,47 @@ func TestIsIPv4(t *testing.T) {
 	}
 }
 
-func TestGetDefaultIpsForSvcNets(t *testing.T) {
-	const (
-		DefaultAdvertiseIPv4Address = "172.20.0.1"
-		DefaultAdvertiseIPv6Address = "fd02::1"
-	)
-	type args struct {
-		cidrs    []string
-		defaults *DefaultAdvIps
-	}
+func TestGetFirstUsableIP(t *testing.T) {
 	tests := []struct {
-		name string
-		args args
-		want []string
+		name    string
+		cidr    string
+		want    string
+		wantErr bool
 	}{
 		{
-			name: "Given IPv6 CIDRs, it should only return fd02::1",
-			args: args{
-				cidrs: []string{"2001::/17", "2001:db8::/62", "::/0", "2000::/3"},
-				defaults: &DefaultAdvIps{
-					IPv4: DefaultAdvertiseIPv4Address,
-					IPv6: DefaultAdvertiseIPv6Address,
-				},
-			},
-			want: []string{DefaultAdvertiseIPv6Address},
+			name:    "Given IPv4 CIDR, it should return the first ip of the network range",
+			cidr:    "192.168.1.0/24",
+			want:    "192.168.1.1",
+			wantErr: false,
 		},
 		{
-			name: "Given IPv4 CIDRs, it should only return 172.20.0.1",
-			args: args{
-				cidrs: []string{"192.168.1.35/24", "0.0.0.0/0", "127.0.0.1/24"},
-				defaults: &DefaultAdvIps{
-					IPv4: DefaultAdvertiseIPv4Address,
-					IPv6: DefaultAdvertiseIPv6Address,
-				},
-			},
-			want: []string{DefaultAdvertiseIPv4Address},
+			name:    "Given IPv6 CIDR, it should return the first ip of the network range",
+			cidr:    "2000::/3",
+			want:    "2000::1",
+			wantErr: false,
 		},
 		{
-			name: "Given IPv6 and IPv4 CIDRs, it should return both fd02::1 and 172.20.0.1",
-			args: args{
-				cidrs: []string{"2001::/17", "192.168.1.35/24", "::/0", "2000::/3"},
-				defaults: &DefaultAdvIps{
-					IPv4: DefaultAdvertiseIPv4Address,
-					IPv6: DefaultAdvertiseIPv6Address,
-				},
-			},
-			want: []string{DefaultAdvertiseIPv6Address, DefaultAdvertiseIPv4Address},
+			name:    "Given a malformed IPv4 CIDR, it should return empty string and err",
+			cidr:    "192.168.1.35.53/24",
+			want:    "",
+			wantErr: true,
 		},
 		{
-			name: "Given IPv6 and malformed IPv4 CIDRs, it should return fd02::1",
-			args: args{
-				cidrs: []string{"2001::/17", "192.168.1.35.53/24", "::/0", "2000::/3"},
-				defaults: &DefaultAdvIps{
-					IPv4: DefaultAdvertiseIPv4Address,
-					IPv6: DefaultAdvertiseIPv6Address,
-				},
-			},
-			want: []string{DefaultAdvertiseIPv6Address},
-		},
-		{
-			name: "Given IPv4 and malformed IPv6 CIDRs, it should return 172.20.0.1",
-			args: args{
-				cidrs: []string{"2001::44444444444444/17", "192.168.1.35/24"},
-				defaults: &DefaultAdvIps{
-					IPv4: DefaultAdvertiseIPv4Address,
-					IPv6: DefaultAdvertiseIPv6Address,
-				},
-			},
-			want: []string{DefaultAdvertiseIPv4Address},
-		},
-		{
-			name: "Given malformed IPv4 and malformed IPv6 CIDRs, it should return 172.20.0.1",
-			args: args{
-				cidrs: []string{"2001::44444444444444/17", "192.168.1.3.47/24"},
-				defaults: &DefaultAdvIps{
-					IPv4: DefaultAdvertiseIPv4Address,
-					IPv6: DefaultAdvertiseIPv6Address,
-				},
-			},
-			want: []string{DefaultAdvertiseIPv4Address},
-		},
-		{
-			name: "Given an empty slice of CIDRs, it should return 172.20.0.1",
-			args: args{
-				cidrs: []string{},
-				defaults: &DefaultAdvIps{
-					IPv4: DefaultAdvertiseIPv4Address,
-					IPv6: DefaultAdvertiseIPv6Address,
-				},
-			},
-			want: []string{DefaultAdvertiseIPv4Address},
+			name:    "Given a malformed IPv6 CIDR, it should return empty string and err",
+			cidr:    "2001::44444444444444/17",
+			want:    "",
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			serviceNets := make([]hyperv1.ServiceNetworkEntry, len(tt.args.cidrs))
-			for i, cidr := range tt.args.cidrs {
-				ipNetCidr, err := ipnet.ParseCIDR(cidr)
-				if err != nil {
-					continue
-				}
-				serviceNets[i].CIDR = *ipNetCidr
+			got, err := GetFirstUsableIP(tt.cidr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetFirstUsableIP() error = %v, wantErr %v", err, tt.wantErr)
+				return
 			}
-			if got := GetDefaultIpsForSvcNets(serviceNets, tt.args.defaults); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetDefaultIpsForSvcNets() = %v, want %v", got, tt.want)
+			if got != tt.want {
+				t.Errorf("GetFirstUsableIP() = %v, want %v", got, tt.want)
 			}
 		})
 	}

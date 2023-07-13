@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	defaultHostPrefix = 23
+	defaultIPv4HostPrefix = 23
+	defaultIPv6HostPrefix = 64
 )
 
 func NetworkConfig() *configv1.Network {
@@ -25,7 +26,12 @@ func ReconcileNetworkConfig(cfg *configv1.Network, hcp *hyperv1.HostedControlPla
 	for _, entry := range hcp.Spec.Networking.ClusterNetwork {
 		hostPrefix := uint32(entry.HostPrefix)
 		if hostPrefix == 0 {
-			hostPrefix = defaultHostPrefix
+			ipv4, _ := util.IsIPv4(entry.CIDR.String())
+			if ipv4 {
+				hostPrefix = defaultIPv4HostPrefix
+			} else {
+				hostPrefix = defaultIPv6HostPrefix
+			}
 		}
 		clusterNetwork = append(clusterNetwork, configv1.ClusterNetworkEntry{
 			CIDR:       entry.CIDR.String(),
