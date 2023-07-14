@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -188,6 +189,35 @@ func ReconcileIgnitionServer(ctx context.Context,
 	if hcp.Spec.Platform.Type != hyperv1.IBMCloudPlatform {
 		servingCertSecretName = manifests.IgnitionServerCertSecret("").Name
 	}
+
+	if len(hcp.Spec.ImageContentSources) > 0 {
+		// Ignition server cannot handle ImageContentSourcePolicies or ImageDigestMachineSet, so we need to
+		// fill the registryOverrides in the case of disconnected environments
+		ocpReleaseMcoImage := componentImages["machine-config-operator"]
+		ocpReleaseHypershiftImage := componentImages["hypershift"]
+
+		mirrors := lookupDisconnectedRegistry(ctx, hcp.Spec.ImageContentSources)
+		if len(mirrors) < 1 {
+			// In a weird case where the entry is not in the ImageContentSources, we need to figure it out
+			log.Info("failed to find the release entry in the ImageContentSources, figuring out the disconnected registry")
+			privateRegistry := strings.Split(hcp.Spec.ReleaseImage, "/")[0]
+			mirrors = append(mirrors, fmt.Sprintf("%s/openshift/release", privateRegistry))
+		}
+
+		mcoSha, err := splitSha(ocpReleaseMcoImage)
+		if err != nil {
+			return fmt.Errorf("failed extracting image sha %s into ignition server reconcilliation: %w", ocpReleaseMcoImage, err)
+		}
+
+		hoSha, err := splitSha(ocpReleaseHypershiftImage)
+		if err != nil {
+			return fmt.Errorf("failed extracting image sha %s into ignition server reconcilliation: %w", ocpReleaseHypershiftImage, err)
+		}
+
+		registryOverrides[ocpReleaseMcoImage] = fmt.Sprintf("%s@%s", mirrors[0], mcoSha)
+		registryOverrides[ocpReleaseHypershiftImage] = fmt.Sprintf("%s@%s", mirrors[0], hoSha)
+	}
+
 	ignitionServerDeployment := ignitionserver.Deployment(controlPlaneNamespace)
 	if result, err := createOrUpdate(ctx, c, ignitionServerDeployment, func() error {
 		return reconcileDeployment(ignitionServerDeployment,
@@ -847,4 +877,29 @@ EOF
 cp /tmp/manifests/99_feature-gate.yaml %[1]s/99_feature-gate.yaml
 `
 	return fmt.Sprintf(script, workDir, featureGateYAML)
+}
+
+func lookupDisconnectedRegistry(ctx context.Context, icss []hyperv1.ImageContentSource) []string {
+	for _, ics := range icss {
+		if strings.Contains(ics.Source, "openshift-release-dev") || strings.Contains(ics.Source, "ocp-release") || strings.Contains(ics.Source, "ocp/release") {
+			// Production releases: 'openshift-release-dev' and 'ocp-release'
+			// Nightly releases: 'ocp/release'
+			return ics.Mirrors
+		}
+	}
+
+	return []string{}
+}
+
+func splitSha(image string) (string, error) {
+	if strings.Contains(image, "@sha") {
+		splitSHA := strings.Split(image, "@")
+		if len(splitSHA) != 2 {
+			return "", fmt.Errorf("failed to extract sha256 from image %s", image)
+		}
+
+		return splitSHA[1], nil
+	}
+
+	return "", fmt.Errorf("failed to extract sha256 from image, format not supportted %s", image)
 }
