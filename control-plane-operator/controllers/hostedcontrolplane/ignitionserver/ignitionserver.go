@@ -17,6 +17,7 @@ import (
 	"github.com/openshift/hypershift/support/certs"
 	"github.com/openshift/hypershift/support/config"
 	"github.com/openshift/hypershift/support/proxy"
+	"github.com/openshift/hypershift/support/thirdparty/library-go/pkg/image/reference"
 	"github.com/openshift/hypershift/support/upsert"
 	"github.com/openshift/hypershift/support/util"
 	prometheusoperatorv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -190,42 +191,36 @@ func ReconcileIgnitionServer(ctx context.Context,
 		servingCertSecretName = manifests.IgnitionServerCertSecret("").Name
 	}
 
-	if len(openShiftRegistryOverrides) > 0 {
+	if openShiftRegistryOverrides != "=" && len(openShiftRegistryOverrides) > 0 {
 		// Ignition server cannot handle ImageContentSourcePolicies or ImageDigestMachineSet, so we need to
 		// fill the registryOverrides in the case of disconnected environments
 		mirrorImage := lookupDisconnectedRegistry(ctx, openShiftRegistryOverrides)
-		if len(mirrorImage) < 1 {
-			// In a weird case where the entry is not in the openShiftRegistryOverrides, we need to figure it out
-			log.Info("failed to find the release entry in the openShiftRegistryOverrides, figuring out the disconnected registry")
-			privateRegistry := strings.Split(hcp.Spec.ReleaseImage, "/")[0]
-			mirrorImage = fmt.Sprintf("%s/openshift/release", privateRegistry)
+		sourceRef, err := reference.Parse(mirrorImage)
+		if err != nil {
+			return fmt.Errorf("failed to parse private registry hosted control plane image reference %q: %w", mirrorImage, err)
 		}
-
-		privateRegistry := strings.Split(mirrorImage, "/")[0]
+		privateRegistry := sourceRef.Registry
 
 		if !strings.HasPrefix(componentImages["machine-config-operator"], privateRegistry) {
 			ocpReleaseMcoImage := componentImages["machine-config-operator"]
-			mcoSha, err := splitSha(ocpReleaseMcoImage)
+			mcoSha, err := reference.Parse(ocpReleaseMcoImage)
 			if err != nil {
-				return fmt.Errorf("failed extracting image sha %s into ignition server reconcilliation: %w", ocpReleaseMcoImage, err)
+				return fmt.Errorf("failed to parse machine-config-operator image reference %q: %w", ocpReleaseMcoImage, err)
 			}
-			registryOverrides[ocpReleaseMcoImage] = fmt.Sprintf("%s@%s", mirrorImage, mcoSha)
+			registryOverrides[ocpReleaseMcoImage] = fmt.Sprintf("%s@%s", mirrorImage, mcoSha.ID)
 		}
 
 		if !strings.HasPrefix(componentImages["cluster-config-operator"], privateRegistry) {
 			ocpReleaseCCOImage := componentImages["cluster-config-operator"]
-			ccoSha, err := splitSha(ocpReleaseCCOImage)
+			ccoSha, err := reference.Parse(ocpReleaseCCOImage)
 			if err != nil {
-				return fmt.Errorf("failed extracting image sha %s into ignition server reconcilliation: %w", ocpReleaseCCOImage, err)
+				return fmt.Errorf("failed to parse cluster-config-operator image reference %s: %w", ocpReleaseCCOImage, err)
 			}
-			registryOverrides[ocpReleaseCCOImage] = fmt.Sprintf("%s@%s", mirrorImage, ccoSha)
+			registryOverrides[ocpReleaseCCOImage] = fmt.Sprintf("%s@%s", mirrorImage, ccoSha.ID)
 		}
 
 		delete(registryOverrides, "")
 	}
-
-	log.Info("===================> OVERRIDES", "registryOverrides", registryOverrides)
-	log.Info("===================> FLAGS OVERRIDES", "registryOverrideGFags", util.ConvertRegistryOverridesToCommandLineFlag(registryOverrides))
 
 	ignitionServerDeployment := ignitionserver.Deployment(controlPlaneNamespace)
 	if result, err := createOrUpdate(ctx, c, ignitionServerDeployment, func() error {
@@ -902,17 +897,4 @@ func lookupDisconnectedRegistry(ctx context.Context, strOcpOverrides string) str
 	}
 
 	return ""
-}
-
-func splitSha(image string) (string, error) {
-	if strings.Contains(image, "@sha") {
-		splitSHA := strings.Split(image, "@")
-		if len(splitSHA) != 2 {
-			return "", fmt.Errorf("failed to extract sha256 from image %s", image)
-		}
-
-		return splitSHA[1], nil
-	}
-
-	return "", fmt.Errorf("failed to extract sha256 from image, format not supportted %s", image)
 }

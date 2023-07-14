@@ -143,46 +143,6 @@ func TestReconcileIgnitionServerServiceRoute(t *testing.T) {
 	}
 }
 
-func TestSplitSha(t *testing.T) {
-	tests := []struct {
-		name    string
-		image   string
-		want    string
-		wantErr bool
-	}{
-		{
-			name:    "given a sha256 container image, it should return the digest and not fail",
-			image:   "quay.io/acm-d/backplane-rhel8-operator@sha256:96ae2bdeb0e9f1e14cf982bff9ea155d63068cc6c0e4a07947ec271e4d9c9901",
-			want:    "sha256:96ae2bdeb0e9f1e14cf982bff9ea155d63068cc6c0e4a07947ec271e4d9c9901",
-			wantErr: false,
-		},
-		{
-			name:    "given a container image using tag notation, it should return an empty string and fail",
-			image:   "quay.io/acm-d/backplane-rhel8-operator:latest",
-			want:    "",
-			wantErr: true,
-		},
-		{
-			name:    "given a badformed container image, it should return an empty string and fail",
-			image:   "quay.io/acm-d/backplane-rhel8-operator@sha256@sha512",
-			want:    "",
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := splitSha(tt.image)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("splitSha() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("splitSha() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestLookupDisconnectedRegistry(t *testing.T) {
 	type args struct {
 		ctx          context.Context
