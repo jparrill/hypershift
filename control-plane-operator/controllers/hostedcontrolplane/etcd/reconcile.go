@@ -183,7 +183,34 @@ func buildEnsureDNSContainer(p *EtcdParams, ns string) func(c *corev1.Container)
 
 func buildEtcdContainer(p *EtcdParams, namespace string) func(c *corev1.Container) {
 	return func(c *corev1.Container) {
-		script := `
+		var script string
+
+		if p.IPv6 {
+			script = `
+/usr/bin/etcd \
+--data-dir=/var/lib/data \
+--name=${HOSTNAME} \
+--initial-advertise-peer-urls=https://${HOSTNAME}.etcd-discovery.${NAMESPACE}.svc:2380 \
+--listen-peer-urls=https://[${POD_IP}]:2380 \
+--listen-client-urls=https://[${POD_IP}]:2379,https://localhost:2379 \
+--advertise-client-urls=https://${HOSTNAME}.etcd-client.${NAMESPACE}.svc:2379 \
+--listen-metrics-urls=https://[::]:2382 \
+--initial-cluster-token=etcd-cluster \
+--initial-cluster=${INITIAL_CLUSTER} \
+--initial-cluster-state=new \
+--quota-backend-bytes=${QUOTA_BACKEND_BYTES} \
+--snapshot-count=10000 \
+--peer-client-cert-auth=true \
+--peer-cert-file=/etc/etcd/tls/peer/peer.crt \
+--peer-key-file=/etc/etcd/tls/peer/peer.key \
+--peer-trusted-ca-file=/etc/etcd/tls/etcd-ca/ca.crt \
+--client-cert-auth=true \
+--cert-file=/etc/etcd/tls/server/server.crt \
+--key-file=/etc/etcd/tls/server/server.key \
+--trusted-ca-file=/etc/etcd/tls/etcd-ca/ca.crt
+`
+		} else {
+			script = `
 /usr/bin/etcd \
 --data-dir=/var/lib/data \
 --name=${HOSTNAME} \
@@ -206,6 +233,7 @@ func buildEtcdContainer(p *EtcdParams, namespace string) func(c *corev1.Containe
 --key-file=/etc/etcd/tls/server/server.key \
 --trusted-ca-file=/etc/etcd/tls/etcd-ca/ca.crt
 `
+		}
 
 		var members []string
 		for i := 0; i < p.DeploymentConfig.Replicas; i++ {
@@ -293,7 +321,24 @@ func buildEtcdContainer(p *EtcdParams, namespace string) func(c *corev1.Containe
 
 func buildEtcdMetricsContainer(p *EtcdParams, namespace string) func(c *corev1.Container) {
 	return func(c *corev1.Container) {
-		script := `
+		var script string
+
+		if p.IPv6 {
+			script = `
+		etcd grpc-proxy start \
+          --endpoints https://localhost:2382 \
+          --metrics-addr https://[::]:2381 \
+          --listen-addr [::1]:2383 \
+          --advertise-client-url ""  \
+          --key /etc/etcd/tls/peer/peer.key \
+          --key-file /etc/etcd/tls/server/server.key \
+          --cert /etc/etcd/tls/peer/peer.crt \
+          --cert-file /etc/etcd/tls/server/server.crt \
+          --cacert /etc/etcd/tls/etcd-ca/ca.crt \
+          --trusted-ca-file /etc/etcd/tls/etcd-metrics-ca/ca.crt
+		`
+		} else {
+			script = `
 		etcd grpc-proxy start \
           --endpoints https://localhost:2382 \
           --metrics-addr https://0.0.0.0:2381 \
@@ -306,7 +351,7 @@ func buildEtcdMetricsContainer(p *EtcdParams, namespace string) func(c *corev1.C
           --cacert /etc/etcd/tls/etcd-ca/ca.crt \
           --trusted-ca-file /etc/etcd/tls/etcd-metrics-ca/ca.crt
 		`
-
+		}
 		c.Image = p.EtcdImage
 		c.ImagePullPolicy = corev1.PullIfNotPresent
 		c.Command = []string{"/bin/sh", "-c", script}
