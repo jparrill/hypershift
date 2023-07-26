@@ -1956,6 +1956,7 @@ func defaultAndValidateConfigManifest(manifest []byte) ([]byte, error) {
 		}
 		manifest = buff.Bytes()
 	case *v1alpha1.ImageContentSourcePolicy:
+	case *configv1.ImageDigestMirrorSet:
 	case *mcfgv1.KubeletConfig:
 	case *mcfgv1.ContainerRuntimeConfig:
 	default:
