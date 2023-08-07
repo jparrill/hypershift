@@ -1,6 +1,8 @@
 package ignitionserver
 
 import (
+	"context"
+	"reflect"
 	"testing"
 
 	. "github.com/onsi/gomega"
@@ -137,6 +139,82 @@ func TestReconcileIgnitionServerServiceRoute(t *testing.T) {
 			g.Expect(test.inputIgnitionServerService.Spec.Ports[0].Port).To(Equal(int32(443)))
 			g.Expect(test.inputIgnitionServerService.Spec.Ports[0].Name).To(Equal("https"))
 			g.Expect(test.inputIgnitionServerService.Spec.Ports[0].Protocol).To(Equal(corev1.ProtocolTCP))
+		})
+	}
+}
+
+func TestSplitSha(t *testing.T) {
+	tests := []struct {
+		name    string
+		image   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "given a sha256 container image, it should return the digest and not fail",
+			image:   "quay.io/acm-d/backplane-rhel8-operator@sha256:96ae2bdeb0e9f1e14cf982bff9ea155d63068cc6c0e4a07947ec271e4d9c9901",
+			want:    "sha256:96ae2bdeb0e9f1e14cf982bff9ea155d63068cc6c0e4a07947ec271e4d9c9901",
+			wantErr: false,
+		},
+		{
+			name:    "given a container image using tag notation, it should return an empty string and fail",
+			image:   "quay.io/acm-d/backplane-rhel8-operator:latest",
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "given a badformed container image, it should return an empty string and fail",
+			image:   "quay.io/acm-d/backplane-rhel8-operator@sha256@sha512",
+			want:    "",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := splitSha(tt.image)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("splitSha() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("splitSha() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLookupDisconnectedRegistry(t *testing.T) {
+	type args struct {
+		ctx          context.Context
+		ocpOverrides string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "given an wellformed openshiftRegistryOverrides string, it should return the mirrorImage pointing to the private registry",
+			args: args{
+				ctx:          context.TODO(),
+				ocpOverrides: "quay.io/jparrill=registry.hypershiftbm.lab:5000/jparrill,quay.io/karmab=registry.hypershiftbm.lab:5000/karmab,quay.io/mavazque=registry.hypershiftbm.lab:5000/mavazque,quay.io/ocp-release=registry.hypershiftbm.lab:5000/openshift/release-images,quay.io/openshift-release-dev/ocp-v4.0-art-dev=registry.hypershiftbm.lab:5000/openshift/release,registry.access.redhat.com/openshift4/ose-oauth-proxy=registry.hypershiftbm.lab:5000/openshift4/ose-oauth-proxy,registry.redhat.io/lvms4=registry.hypershiftbm.lab:5000/lvms4,registry.redhat.io/multicluster-engine=registry.hypershiftbm.lab:5000/acm-d,registry.redhat.io/openshift4=registry.hypershiftbm.lab:5000/openshift4,registry.redhat.io/openshift4=registry.hypershiftbm.lab:5000/openshift4,registry.redhat.io/rhacm2=registry.hypershiftbm.lab:5000/acm-d,registry.redhat.io/rhel8=registry.hypershiftbm.lab:5000/rhel8",
+			},
+			want: "registry.hypershiftbm.lab:5000/openshift/release",
+		},
+		{
+			name: "given an wellformed openshiftRegistryOverrides string without ocpRelease entry, it should return an empty slice",
+			args: args{
+				ctx:          context.TODO(),
+				ocpOverrides: "quay.io/jparrill=registry.hypershiftbm.lab:5000/jparrill,quay.io/karmab=registry.hypershiftbm.lab:5000/karmab,quay.io/mavazque=registry.hypershiftbm.lab:5000/mavazque,registry.access.redhat.com/openshift4/ose-oauth-proxy=registry.hypershiftbm.lab:5000/openshift4/ose-oauth-proxy,registry.redhat.io/lvms4=registry.hypershiftbm.lab:5000/lvms4,registry.redhat.io/multicluster-engine=registry.hypershiftbm.lab:5000/acm-d,registry.redhat.io/openshift4=registry.hypershiftbm.lab:5000/openshift4,registry.redhat.io/openshift4=registry.hypershiftbm.lab:5000/openshift4,registry.redhat.io/rhacm2=registry.hypershiftbm.lab:5000/acm-d,registry.redhat.io/rhel8=registry.hypershiftbm.lab:5000/rhel8",
+			},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := lookupDisconnectedRegistry(tt.args.ctx, tt.args.ocpOverrides); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("lookupDisconnectedRegistry() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
