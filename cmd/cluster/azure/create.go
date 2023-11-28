@@ -7,10 +7,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	apifixtures "github.com/openshift/hypershift/api/fixtures"
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/cmd/cluster/core"
 	azureinfra "github.com/openshift/hypershift/cmd/infra/azure"
+	apifixtures "github.com/openshift/hypershift/examples/fixtures"
 	"github.com/openshift/hypershift/support/infraid"
 	"github.com/openshift/hypershift/support/releaseinfo"
 

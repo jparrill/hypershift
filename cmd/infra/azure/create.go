@@ -11,8 +11,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
-	apifixtures "github.com/openshift/hypershift/api/fixtures"
 	"github.com/openshift/hypershift/cmd/log"
+	apifixtures "github.com/openshift/hypershift/examples/fixtures"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	utilpointer "k8s.io/utils/pointer"
 	"sigs.k8s.io/yaml"
