@@ -18,6 +18,7 @@ limitations under the License.
 package v1beta1
 
 import (
+	v1alpha1 "github.com/openshift/api/config/v1alpha1"
 	v1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 )
 
@@ -27,6 +28,7 @@ type EtcdSpecApplyConfiguration struct {
 	ManagementType *v1beta1.EtcdManagementType          `json:"managementType,omitempty"`
 	Managed        *ManagedEtcdSpecApplyConfiguration   `json:"managed,omitempty"`
 	Unmanaged      *UnmanagedEtcdSpecApplyConfiguration `json:"unmanaged,omitempty"`
+	Backup         *v1alpha1.BackupSpec                 `json:"backup,omitempty"`
 }
 
 // EtcdSpecApplyConfiguration constructs an declarative configuration of the EtcdSpec type for use with
@@ -56,5 +58,13 @@ func (b *EtcdSpecApplyConfiguration) WithManaged(value *ManagedEtcdSpecApplyConf
 // If called multiple times, the Unmanaged field is set to the value of the last call.
 func (b *EtcdSpecApplyConfiguration) WithUnmanaged(value *UnmanagedEtcdSpecApplyConfiguration) *EtcdSpecApplyConfiguration {
 	b.Unmanaged = value
+	return b
+}
+
+// WithBackup sets the Backup field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Backup field is set to the value of the last call.
+func (b *EtcdSpecApplyConfiguration) WithBackup(value v1alpha1.BackupSpec) *EtcdSpecApplyConfiguration {
+	b.Backup = &value
 	return b
 }

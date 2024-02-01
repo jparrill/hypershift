@@ -37,6 +37,7 @@ type HostedClusterSpecApplyConfiguration struct {
 	Networking                       *ClusterNetworkingApplyConfiguration                 `json:"networking,omitempty"`
 	Autoscaling                      *ClusterAutoscalingApplyConfiguration                `json:"autoscaling,omitempty"`
 	Etcd                             *EtcdSpecApplyConfiguration                          `json:"etcd,omitempty"`
+	EtcdBackup                       *EtcdSpecApplyConfiguration                          `json:"etcd,omitempty"`
 	Services                         []ServicePublishingStrategyMappingApplyConfiguration `json:"services,omitempty"`
 	PullSecret                       *v1.LocalObjectReference                             `json:"pullSecret,omitempty"`
 	SSHKey                           *v1.LocalObjectReference                             `json:"sshKey,omitempty"`
@@ -152,6 +153,14 @@ func (b *HostedClusterSpecApplyConfiguration) WithAutoscaling(value *ClusterAuto
 // If called multiple times, the Etcd field is set to the value of the last call.
 func (b *HostedClusterSpecApplyConfiguration) WithEtcd(value *EtcdSpecApplyConfiguration) *HostedClusterSpecApplyConfiguration {
 	b.Etcd = value
+	return b
+}
+
+// WithEtcdBackup sets the EtcdBackup field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the EtcdBackup field is set to the value of the last call.
+func (b *HostedClusterSpecApplyConfiguration) WithEtcdBackup(value *EtcdSpecApplyConfiguration) *HostedClusterSpecApplyConfiguration {
+	b.EtcdBackup = value
 	return b
 }
 

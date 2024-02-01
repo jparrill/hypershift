@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
+	configv1alpha1 "github.com/openshift/api/config/v1alpha1"
 
 	"github.com/openshift/hypershift/api/util/ipnet"
 )
@@ -337,6 +338,13 @@ type HostedClusterSpec struct {
 	// +kubebuilder:default={managementType: "Managed", managed: {storage: {type: "PersistentVolume", persistentVolume: {size: "8Gi"}}}}
 	// +immutable
 	Etcd EtcdSpec `json:"etcd"`
+
+	// EtcdBackup specifies configuration for the control plane for the etcd backups.
+	//
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default={managementType: "Managed", managed: {storage: {type: "PersistentVolume", persistentVolume: {size: "8Gi"}}}}
+	// +immutable
+	EtcdBackup EtcdSpec `json:"etcd"`
 
 	// Services specifies how individual control plane services are published from
 	// the hosting cluster of the control plane.
@@ -1678,6 +1686,10 @@ type ClusterAutoscaling struct {
 // +kubebuilder:validation:Enum=Managed;Unmanaged
 type EtcdManagementType string
 
+// EtcdServiceType is a enum specifying the service provider to upload the etcd backup
+// +kubebuilder:validation:Enum=s3;azure
+type EtcdServiceType string
+
 const (
 	// Managed means HyperShift should provision and operator the etcd cluster
 	// automatically.
@@ -1686,7 +1698,39 @@ const (
 	// Unmanaged means HyperShift will not provision or manage the etcd cluster,
 	// and the user is responsible for doing so.
 	Unmanaged EtcdManagementType = "Unmanaged"
+
+	// S3Storage service provider
+	S3Storage EtcdServiceType = "s3"
+
+	// AzureStorage service provider
+	AzureStorage EtcdServiceType = "azure"
 )
+
+// StoreEndpoint is the upload service to submit the ETCD backups to an external
+// service endpoint.
+type StoreEndpoint struct {
+	// BackupPrefix is the name prefix to be set to the etcd backup
+	BackupPrefix string `json:"backupprefix"`
+
+	// ServiceType sets the service provider to upload the etcd backup
+	ServiceType EtcdServiceType `json:"servicetype"`
+
+	// ServiceTypeConfig is the configuration for the service provider
+	//ServiceTypeConfig
+
+	// Credentials is the secret reference name containing the service provider credentials.
+	Credentials string `json:"credentials"`
+}
+
+// EtcdBackup is the main field to manage the HostedCluster etcd backup.
+type EtcdBackup struct {
+	// StoreEndpoint describes the external storage where the HostedCluster etcd backup
+	// will be stored.
+	StoreEndpoint StoreEndpoint `json:"storeendpoint,omitempty"`
+
+	// EtcdBackupSpec is the field inherited from the original Etcd backup api
+	EtcdBackup configv1alpha1.EtcdBackupSpec `json:"etcdbackup"`
+}
 
 // EtcdSpec specifies configuration for a control plane etcd cluster.
 type EtcdSpec struct {
@@ -1708,6 +1752,10 @@ type EtcdSpec struct {
 	// +optional
 	// +immutable
 	Unmanaged *UnmanagedEtcdSpec `json:"unmanaged,omitempty"`
+
+	// Backup defines the configuration used to perform etcd backups to The
+	// hostedcluster
+	Backup EtcdBackup `json:"backup,omitempty"`
 }
 
 // ManagedEtcdSpec specifies the behavior of an etcd cluster managed by
