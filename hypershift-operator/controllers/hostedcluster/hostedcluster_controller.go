@@ -178,6 +178,8 @@ type HostedClusterReconciler struct {
 
 	OperatorNamespace string
 
+	reconcileMetadataProviders func(ctx context.Context, imgOverrides map[string]string) error
+
 	overwriteReconcile   func(ctx context.Context, req ctrl.Request, log logr.Logger, hcluster *hyperv1.HostedCluster) (ctrl.Result, error)
 	now                  func() metav1.Time
 	KubevirtInfraClients kvinfra.KubevirtInfraClientMap
@@ -219,6 +221,8 @@ func (r *HostedClusterReconciler) SetupWithManager(mgr ctrl.Manager, createOrUpd
 	// When SCC is available (OpenShift), the container's security context and UID range is automatically set
 	// When SCC is not available (Kubernetes), we want to explicitly set a default (non-root) security context
 	r.SetDefaultSecurityContext = !r.ManagementClusterCapabilities.Has(capabilities.CapabilitySecurityContextConstraint)
+
+	r.reconcileMetadataProviders = r.reconcileMetadataProvidersImpl
 
 	return bldr.Complete(r)
 }
@@ -334,6 +338,12 @@ func (r *HostedClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	return res, err
+}
+
+func (r *HostedClusterReconciler) reconcileMetadataProvidersImpl(ctx context.Context, imgOverrides map[string]string) error {
+	var err error
+	r.ReleaseProvider, r.ImageMetadataProvider, err = globalconfig.RenconcileMgmtImageRegistryOverrides(ctx, r.ManagementClusterCapabilities, r.Client, imgOverrides)
+	return err
 }
 
 func (r *HostedClusterReconciler) reconcile(ctx context.Context, req ctrl.Request, log logr.Logger, hcluster *hyperv1.HostedCluster) (ctrl.Result, error) {
@@ -583,8 +593,7 @@ func (r *HostedClusterReconciler) reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Reconcile the ICSP/IDMS from the management cluster
-	r.ReleaseProvider, r.ImageMetadataProvider, err = globalconfig.RenconcileMgmtImageRegistryOverrides(ctx, r.ManagementClusterCapabilities, r.Client, imgOverrides)
-	if err != nil {
+	if err := r.reconcileMetadataProviders(ctx, imgOverrides); err != nil {
 		return ctrl.Result{}, err
 	}
 
