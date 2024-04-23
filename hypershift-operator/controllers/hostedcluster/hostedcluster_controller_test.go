@@ -1059,10 +1059,11 @@ func TestHostedClusterWatchesEverythingItCreates(t *testing.T) {
 			capabilities.CapabilityIngress,
 			capabilities.CapabilityProxy,
 		),
-		createOrUpdate:        func(reconcile.Request) upsert.CreateOrUpdateFN { return ctrl.CreateOrUpdate },
-		ReleaseProvider:       &fakereleaseprovider.FakeReleaseProvider{},
-		ImageMetadataProvider: &fakeimagemetadataprovider.FakeImageMetadataProvider{Result: &dockerv1client.DockerImageConfig{}},
-		now:                   metav1.Now,
+		createOrUpdate:             func(reconcile.Request) upsert.CreateOrUpdateFN { return ctrl.CreateOrUpdate },
+		ReleaseProvider:            &fakereleaseprovider.FakeReleaseProvider{},
+		ImageMetadataProvider:      &fakeimagemetadataprovider.FakeImageMetadataProvider{Result: &dockerv1client.DockerImageConfig{}},
+		reconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) error { return nil },
+		now:                        metav1.Now,
 	}
 
 	r.KubevirtInfraClients = kvinfra.NewMockKubevirtInfraClientMap(&createTypeTrackingClient{Client: fake.NewClientBuilder().WithScheme(api.Scheme).WithObjects(objects...).Build()},
