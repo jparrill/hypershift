@@ -51,7 +51,6 @@ import (
 	hyperapi "github.com/openshift/hypershift/support/api"
 	"github.com/openshift/hypershift/support/capabilities"
 	"github.com/openshift/hypershift/support/metrics"
-	"github.com/openshift/hypershift/support/releaseinfo"
 	"github.com/openshift/hypershift/support/upsert"
 	hyperutil "github.com/openshift/hypershift/support/util"
 	"github.com/spf13/cobra"
@@ -284,28 +283,10 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		return fmt.Errorf("failed to construct api reading client: %w", err)
 	}
 
-	// Populate registry overrides with any ICSP and IDMS from a OpenShift management cluster
-	var imageRegistryOverrides map[string][]string
-	if mgmtClusterCaps.Has(capabilities.CapabilityICSP) || mgmtClusterCaps.Has(capabilities.CapabilityIDMS) {
-		imageRegistryOverrides, err = globalconfig.GetAllImageRegistryMirrors(ctx, apiReadingClient, mgmtClusterCaps.Has(capabilities.CapabilityIDMS), mgmtClusterCaps.Has(capabilities.CapabilityICSP))
-		if err != nil {
-			return fmt.Errorf("failed to populate image registry overrides: %w", err)
-		}
-	}
-
-	releaseProviderWithOpenShiftImageRegistryOverrides := &releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator{
-		Delegate: &releaseinfo.RegistryMirrorProviderDecorator{
-			Delegate: &releaseinfo.CachedProvider{
-				Inner: &releaseinfo.RegistryClientProvider{},
-				Cache: map[string]*releaseinfo.ReleaseImage{},
-			},
-			RegistryOverrides: opts.RegistryOverrides,
-		},
-		OpenShiftImageRegistryOverrides: imageRegistryOverrides,
-	}
-
-	imageMetaDataProvider := &hyperutil.RegistryClientImageMetadataProvider{
-		OpenShiftImageRegistryOverrides: imageRegistryOverrides,
+	// Reconcile the ICSP/IDMS from the management cluster
+	releaseProviderWithOpenShiftImageRegistryOverrides, imageMetaDataProvider, err := globalconfig.RenconcileMgmtImageRegistryOverrides(ctx, mgmtClusterCaps, apiReadingClient, opts.RegistryOverrides)
+	if err != nil {
+		return fmt.Errorf("unable to parse ICSP/IDMS from management cluster: %w", err)
 	}
 
 	monitoringDashboards := (os.Getenv("MONITORING_DASHBOARDS") == "1")

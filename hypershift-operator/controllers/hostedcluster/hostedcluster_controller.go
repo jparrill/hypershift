@@ -96,6 +96,7 @@ import (
 	"github.com/openshift/hypershift/support/capabilities"
 	"github.com/openshift/hypershift/support/certs"
 	"github.com/openshift/hypershift/support/config"
+	"github.com/openshift/hypershift/support/globalconfig"
 	"github.com/openshift/hypershift/support/images"
 	"github.com/openshift/hypershift/support/infraid"
 	"github.com/openshift/hypershift/support/metrics"
@@ -573,6 +574,18 @@ func (r *HostedClusterReconciler) reconcile(ctx context.Context, req ctrl.Reques
 		} else {
 			hcluster.Status.KubeConfig = &corev1.LocalObjectReference{Name: kubeConfigSecret.Name}
 		}
+	}
+
+	var imgOverrides = make(map[string]string)
+
+	if r.ReleaseProvider != nil {
+		imgOverrides = r.ReleaseProvider.GetRegistryOverrides()
+	}
+
+	// Reconcile the ICSP/IDMS from the management cluster
+	r.ReleaseProvider, r.ImageMetadataProvider, err = globalconfig.RenconcileMgmtImageRegistryOverrides(ctx, r.ManagementClusterCapabilities, r.Client, imgOverrides)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Set kubeadminPassword status
