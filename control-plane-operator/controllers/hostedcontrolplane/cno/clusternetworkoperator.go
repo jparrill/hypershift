@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	utilpointer "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -34,6 +34,40 @@ const (
 	konnectivityProxyName = "konnectivity-proxy"
 	caConfigMap           = "root-ca"
 	caConfigMapKey        = "ca.crt"
+
+	workerNamespace      = "openshift-network-operator"
+	workerServiceAccount = "cluster-network-operator"
+	tokenFile            = "token"
+	metricsPort          = 60000
+
+	startScriptTemplateStr = `#!/bin/bash
+	set -euo pipefail
+
+	while true; do
+	   if [[ -f {{ .TokenDir }}/token ]]; then
+		  break
+	   fi
+	   echo "Waiting for client token"
+	   sleep 2
+	done
+
+	echo "{{ .WorkerNamespace }}" > "{{ .TokenDir }}/namespace"
+	cp "{{ .CABundle }}" "{{ .TokenDir }}/ca.crt"
+	export KUBERNETES_SERVICE_HOST=kube-apiserver
+	export KUBERNETES_SERVICE_PORT=$KUBE_APISERVER_SERVICE_PORT
+
+	while true; do
+	  if curl --fail --cacert {{ .TokenDir }}/ca.crt -H "Authorization: Bearer $(cat {{ .TokenDir }}/token)" "https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}/apis/config.openshift.io/v1/featuregates" &> /dev/null; then
+		break
+	  fi
+	  echo "Waiting for access to featuregates resource"
+	  sleep 2
+	done
+
+	exec /usr/bin/cluster-image-registry-operator \
+	  --files="{{ .ServingCertDir }}/tls.crt" \
+	  --files="{{ .ServingCertDir }}/tls.key"
+	`
 )
 
 type Images struct {
@@ -76,6 +110,45 @@ type Params struct {
 	DefaultIngressDomain    string
 }
 
+var (
+	startScript string
+
+	volumeMounts = util.PodVolumeMounts{
+		initContainerRemoveOldCNO().Name: {
+			volumeHostedKubernetes().Name: "/etc/hosted-kubernetes",
+		},
+		initContainerRewriteConfig().Name: {
+			volumeHostedKubernetes().Name: "/etc/hosted-kubernetes",
+			volumeConfigs().Name:          "/configs",
+		},
+		initContainerRemoveOldMultusValidatingWebhookConf().Name: {
+			volumeHostedKubernetes().Name: "/etc/hosted-kubernetes",
+		},
+		containerCNOMain().Name: {
+			volumeHostedKubernetes().Name: "/etc/hosted-kubernetes",
+			volumeConfigs().Name:          "/configs",
+		},
+		containerKonnectivityProxy().Name: {
+			volumeHostedKubernetes().Name:      "/etc/kubernetes",
+			volumeKonnectivityProxyCert().Name: "/etc/konnectivity/proxy-client",
+			volumeKonnectivityProxyCA().Name:   "/etc/konnectivity/proxy-ca",
+		},
+		containerClientTokenMinter().Name: {
+			volumeClientToken().Name:     "/var/client-token",
+			volumeAdminKubeconfig().Name: "/etc/kubernetes",
+		},
+	}
+)
+
+//func init() {
+//	var err error
+//	startScriptTemplate := template.Must(template.New("script").Parse(startScriptTemplateStr))
+//	startScript, err = operatorStartScript(startScriptTemplate)
+//	if err != nil {
+//		panic(err.Error())
+//	}
+//}
+
 func NewParams(hcp *hyperv1.HostedControlPlane, version string, releaseImageProvider *imageprovider.ReleaseImageProvider, userReleaseImageProvider *imageprovider.ReleaseImageProvider, setDefaultSecurityContext bool, defaultIngressDomain string) Params {
 	p := Params{
 		Images: Images{
@@ -110,19 +183,23 @@ func NewParams(hcp *hyperv1.HostedControlPlane, version string, releaseImageProv
 		DefaultIngressDomain:    defaultIngressDomain,
 		CAConfigMap:             caConfigMap,
 		CAConfigMapKey:          caConfigMapKey,
+		DeploymentConfig: config.DeploymentConfig{
+			Scheduling: config.Scheduling{
+				PriorityClass: config.DefaultPriorityClass,
+			},
+			SetDefaultSecurityContext: setDefaultSecurityContext,
+		},
 	}
 
 	p.DeploymentConfig.AdditionalLabels = map[string]string{
 		config.NeedManagementKASAccessLabel: "true",
 	}
-	p.DeploymentConfig.Scheduling.PriorityClass = config.DefaultPriorityClass
 	// No support for multus-admission-controller at the moment. TODO: add support after https://issues.redhat.com/browse/OCPBUGS-7942 is resolved.
 	if hcp.Annotations[hyperv1.ControlPlanePriorityClass] != "" {
 		p.DeploymentConfig.Scheduling.PriorityClass = hcp.Annotations[hyperv1.ControlPlanePriorityClass]
 	}
 	p.DeploymentConfig.SetRestartAnnotation(hcp.ObjectMeta)
-	p.DeploymentConfig.SetDefaults(hcp, nil, utilpointer.Int(1))
-	p.DeploymentConfig.SetDefaultSecurityContext = setDefaultSecurityContext
+	p.DeploymentConfig.SetDefaults(hcp, nil, ptr.To(int(1)))
 	if util.IsPrivateHCP(hcp) {
 		p.APIServerAddress = fmt.Sprintf("api.%s.hypershift.local", hcp.Name)
 		p.APIServerPort = util.APIPortForLocalZone(util.IsLBKAS(hcp))
@@ -298,12 +375,8 @@ func ReconcileServiceAccount(sa *corev1.ServiceAccount, ownerRef config.OwnerRef
 func ReconcileDeployment(dep *appsv1.Deployment, params Params, platformType hyperv1.PlatformType) error {
 	params.OwnerRef.ApplyTo(dep)
 
-	cnoResources := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceMemory: resource.MustParse("100Mi"),
-			corev1.ResourceCPU:    resource.MustParse("10m"),
-		},
-	}
+	cnoResources := buildRequestResourceRequirements("10m", "100Mi")
+
 	// preserve existing resource requirements for the CNO container
 	mainContainer := util.FindContainer(operatorName, dep.Spec.Template.Spec.Containers)
 	if mainContainer != nil {
@@ -312,12 +385,8 @@ func ReconcileDeployment(dep *appsv1.Deployment, params Params, platformType hyp
 		}
 	}
 
-	kProxyResources := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceMemory: resource.MustParse("10Mi"),
-			corev1.ResourceCPU:    resource.MustParse("10m"),
-		},
-	}
+	kProxyResources := buildRequestResourceRequirements("10m", "100Mi")
+
 	// preserve existing resource requirements for the konnectivity-proxy container
 	kProxyContainer := util.FindContainer(konnectivityProxyName, dep.Spec.Template.Spec.Containers)
 	if kProxyContainer != nil {
@@ -326,7 +395,7 @@ func ReconcileDeployment(dep *appsv1.Deployment, params Params, platformType hyp
 		}
 	}
 
-	dep.Spec.Replicas = utilpointer.Int32(1)
+	dep.Spec.Replicas = ptr.To(int32(1))
 	dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"name": operatorName}}
 	dep.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
 	if dep.Spec.Template.Annotations == nil {
@@ -392,175 +461,31 @@ func ReconcileDeployment(dep *appsv1.Deployment, params Params, platformType hyp
 	}
 
 	dep.Spec.Template.Spec.InitContainers = []corev1.Container{
-		// Hack: add an initContainer that deletes the old (in-cluster) CNO first
-		// This is because the CVO doesn't "delete" objects, and we need to
-		// handle adopting existing clusters
-		{
-			Command: []string{"/usr/bin/kubectl"},
-			Args: []string{
-				"--kubeconfig=/etc/hosted-kubernetes/kubeconfig",
-				"-n=openshift-network-operator",
-				"delete",
-				"--ignore-not-found=true",
-				"deployment",
-				"network-operator",
-			},
-			Name:  "remove-old-cno",
-			Image: params.Images.CLI,
-			Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("50Mi"),
-			}},
-			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-			VolumeMounts: []corev1.VolumeMount{
-				{Name: "hosted-etc-kube", MountPath: "/etc/hosted-kubernetes"},
-			},
-		},
-
-		// Add an InitContainer that transmutes the in-cluster config to a Kubeconfig
-		// So CNO thinks the "default" config is the hosted cluster
-		{
-			Command: []string{"/bin/bash"},
-			Args: []string{
-				"-c",
-				`
-set -xeuo pipefail
-kc=/configs/management
-kubectl --kubeconfig $kc config set clusters.default.server "https://[${KUBERNETES_SERVICE_HOST}]:${KUBERNETES_SERVICE_PORT}"
-kubectl --kubeconfig $kc config set clusters.default.certificate-authority /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-kubectl --kubeconfig $kc config set users.admin.tokenFile /var/run/secrets/kubernetes.io/serviceaccount/token
-kubectl --kubeconfig $kc config set contexts.default.cluster default
-kubectl --kubeconfig $kc config set contexts.default.user admin
-kubectl --kubeconfig $kc config set contexts.default.namespace $(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-kubectl --kubeconfig $kc config use-context default`,
-			},
-			Name:  "rewrite-config",
-			Image: params.Images.CLI,
-			Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("50Mi"),
-			}},
-			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-			VolumeMounts: []corev1.VolumeMount{
-				{Name: "hosted-etc-kube", MountPath: "/etc/hosted-kubernetes"},
-				{Name: "configs", MountPath: "/configs"},
-			},
-		},
+		util.BuildContainer(initContainerRemoveOldCNO(), buildRemoveOldCNOInitContainer(params.Images.CLI)),
+		util.BuildContainer(initContainerRewriteConfig(), buildRewriteConfigInitContainer(params.Images.CLI)),
 	}
 
 	parsedReleaseVersion, err := semver.Parse(params.ReleaseVersion)
 	if err != nil {
 		return fmt.Errorf("parsing ReleaseVersion (%s): %w", params.ReleaseVersion, err)
 	}
+
 	if parsedReleaseVersion.Minor == uint64(12) {
-		dep.Spec.Template.Spec.InitContainers = append(dep.Spec.Template.Spec.InitContainers, corev1.Container{
-			Command: []string{"/bin/bash"},
-			Args: []string{
-				"-c",
-				`
-set -xeuo pipefail
-kc=/etc/hosted-kubernetes/kubeconfig
-sc=$(kubectl --kubeconfig $kc get --ignore-not-found validatingwebhookconfiguration multus.openshift.io -o jsonpath='{.webhooks[?(@.name == "multus-validating-config.k8s.io")].clientConfig.service}')
-if [[ -n $sc ]]; then kubectl --kubeconfig $kc delete --ignore-not-found validatingwebhookconfiguration multus.openshift.io; fi`,
-			},
-			Name:  "remove-old-multus-validating-webhook-configuration",
-			Image: params.Images.CLI,
-			Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("50Mi"),
-			}},
-			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-			VolumeMounts: []corev1.VolumeMount{
-				{Name: "hosted-etc-kube", MountPath: "/etc/hosted-kubernetes"},
-			},
-		})
+		dep.Spec.Template.Spec.InitContainers = append(dep.Spec.Template.Spec.InitContainers, util.BuildContainer(initContainerRemoveOldMultusValidatingWebhookConf(), buildRemoveOldMultusValidatingWebhookConfInitContainer(params.Images.CLI)))
 	}
 
 	dep.Spec.Template.Spec.ServiceAccountName = manifests.ClusterNetworkOperatorServiceAccount("").Name
-	dep.Spec.Template.Spec.Containers = []corev1.Container{{
-		Command: []string{"/usr/bin/cluster-network-operator"},
-		Args:    cnoArgs,
-		Env: append(cnoEnv, []corev1.EnvVar{
-			{Name: "HYPERSHIFT", Value: "true"},
-			{Name: "HOSTED_CLUSTER_NAME", Value: params.HostedClusterName},
-			{Name: "CA_CONFIG_MAP", Value: params.CAConfigMap},
-			{Name: "CA_CONFIG_MAP_KEY", Value: params.CAConfigMapKey},
-			{Name: "TOKEN_AUDIENCE", Value: params.TokenAudience},
-
-			{Name: "RELEASE_VERSION", Value: params.ReleaseVersion},
-			{Name: "APISERVER_OVERRIDE_HOST", Value: params.APIServerAddress}, // We need to pass this down to networking components on the nodes
-			{Name: "APISERVER_OVERRIDE_PORT", Value: fmt.Sprint(params.APIServerPort)},
-			{Name: "OVN_NB_RAFT_ELECTION_TIMER", Value: "10"},
-			{Name: "OVN_SB_RAFT_ELECTION_TIMER", Value: "16"},
-			{Name: "OVN_NORTHD_PROBE_INTERVAL", Value: "5000"},
-			{Name: "OVN_CONTROLLER_INACTIVITY_PROBE", Value: "180000"},
-			{Name: "OVN_NB_INACTIVITY_PROBE", Value: "60000"},
-			{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.name",
-				},
-			}},
-			{Name: "HOSTED_CLUSTER_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.namespace",
-				},
-			}},
-
-			{Name: "KUBE_PROXY_IMAGE", Value: params.Images.KubeProxy},
-			{Name: "KUBE_RBAC_PROXY_IMAGE", Value: params.Images.KubeRBACProxy},
-			{Name: "MULTUS_IMAGE", Value: params.Images.Multus},
-			{Name: "MULTUS_ADMISSION_CONTROLLER_IMAGE", Value: params.Images.MultusAdmissionController},
-			{Name: "CNI_PLUGINS_IMAGE", Value: params.Images.CNIPlugins},
-			{Name: "BOND_CNI_PLUGIN_IMAGE", Value: params.Images.BondCNIPlugin},
-			{Name: "WHEREABOUTS_CNI_IMAGE", Value: params.Images.WhereaboutsCNI},
-			{Name: "ROUTE_OVERRRIDE_CNI_IMAGE", Value: params.Images.RouteOverrideCNI},
-			{Name: "MULTUS_NETWORKPOLICY_IMAGE", Value: params.Images.MultusNetworkPolicy},
-			{Name: "OVN_IMAGE", Value: params.Images.OVN},
-			{Name: "OVN_CONTROL_PLANE_IMAGE", Value: params.Images.OVNControlPlane},
-			{Name: "EGRESS_ROUTER_CNI_IMAGE", Value: params.Images.EgressRouterCNI},
-			{Name: "NETWORK_METRICS_DAEMON_IMAGE", Value: params.Images.NetworkMetricsDaemon},
-			{Name: "NETWORK_CHECK_SOURCE_IMAGE", Value: params.Images.NetworkCheckSource},
-			{Name: "NETWORK_CHECK_TARGET_IMAGE", Value: params.Images.NetworkCheckTarget},
-			{Name: "NETWORKING_CONSOLE_PLUGIN_IMAGE", Value: params.Images.NetworkingConsolePlugin},
-			{Name: "CLOUD_NETWORK_CONFIG_CONTROLLER_IMAGE", Value: params.Images.CloudNetworkConfigController},
-			{Name: "TOKEN_MINTER_IMAGE", Value: params.Images.TokenMinter},
-			{Name: "CLI_IMAGE", Value: params.Images.CLI},
-			{Name: "SOCKS5_PROXY_IMAGE", Value: params.Images.Socks5Proxy},
-			{Name: "OPENSHIFT_RELEASE_IMAGE", Value: params.DeploymentConfig.AdditionalAnnotations[hyperv1.ReleaseImageAnnotation]},
-		}...),
-		Name:                     operatorName,
-		Image:                    params.Images.NetworkOperator,
-		ImagePullPolicy:          corev1.PullIfNotPresent,
-		Resources:                cnoResources,
-		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "hosted-etc-kube", MountPath: "/etc/hosted-kubernetes"},
-			{Name: "configs", MountPath: "/configs"},
-		},
-	},
-		{
-			// CNO uses konnectivity-proxy to perform proxy readiness checks through the hosted cluster's network
-			Name:    konnectivityProxyName,
-			Image:   params.Images.Socks5Proxy,
-			Command: []string{"/usr/bin/control-plane-operator", "konnectivity-socks5-proxy", "--disable-resolver"},
-			Args:    []string{"run"},
-			Env: []corev1.EnvVar{{
-				Name:  "KUBECONFIG",
-				Value: "/etc/kubernetes/kubeconfig",
-			}},
-			Resources: kProxyResources,
-			VolumeMounts: []corev1.VolumeMount{
-				{Name: "hosted-etc-kube", MountPath: "/etc/kubernetes"},
-				{Name: "konnectivity-proxy-cert", MountPath: "/etc/konnectivity/proxy-client"},
-				{Name: "konnectivity-proxy-ca", MountPath: "/etc/konnectivity/proxy-ca"},
-			},
-		},
+	cnoEnv = append(cnoEnv, buildCNOEnvVars(params)...)
+	dep.Spec.Template.Spec.Containers = []corev1.Container{
+		util.BuildContainer(containerCNOMain(), buildMainCNOContainer(params.Images.NetworkOperator, cnoResources, cnoArgs, cnoEnv)),
+		util.BuildContainer(containerKonnectivityProxy(), buildKonnectivityProxyContainer(params.Images.Socks5Proxy, kProxyResources)),
 	}
 	dep.Spec.Template.Spec.Volumes = []corev1.Volume{
-		{Name: "hosted-etc-kube", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: manifests.KASServiceKubeconfigSecret("").Name}}},
-		{Name: "configs", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-		{Name: "konnectivity-proxy-cert", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: manifests.KonnectivityClientSecret("").Name, DefaultMode: utilpointer.Int32(0640)}}},
-		{Name: "konnectivity-proxy-ca", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: manifests.KonnectivityCAConfigMap("").Name}, DefaultMode: utilpointer.Int32(0640)}}},
+		util.BuildVolume(volumeHostedKubernetes(), buildVolumeHostedKubernetes),
+		util.BuildVolume(volumeClientToken(), buildVolumeClientToken),
+		util.BuildVolume(volumeConfigs(), buildVolumeConfigs),
+		util.BuildVolume(volumeKonnectivityProxyCert(), buildVolumeKonnectivityProxyCert),
+		util.BuildVolume(volumeKonnectivityProxyCA(), buildVolumeKonnectivityProxyCA),
 	}
 
 	params.DeploymentConfig.ApplyTo(dep)
@@ -600,4 +525,282 @@ func SetRestartAnnotationAndPatch(ctx context.Context, crclient client.Client, d
 	}
 
 	return nil
+}
+
+func volumeClientToken() *corev1.Volume {
+	return &corev1.Volume{
+		Name: "client-token",
+	}
+}
+
+func buildVolumeClientToken(v *corev1.Volume) {
+	v.EmptyDir = &corev1.EmptyDirVolumeSource{}
+}
+
+func containerClientTokenMinter() *corev1.Container {
+	return &corev1.Container{
+		Name: "client-token-minter",
+	}
+}
+
+//func buildClientTokenMinter(image, issuerURL string) func(*corev1.Container) {
+//	return func(c *corev1.Container) {
+//		c.Image = image
+//		c.Command = []string{
+//			"/usr/bin/control-plane-operator",
+//			"token-minter",
+//		}
+//		c.Args = []string{
+//			"--service-account-namespace",
+//			workerNamespace,
+//			"--service-account-name",
+//			workerServiceAccount,
+//			"--token-file",
+//			path.Join(volumeMounts.Path(c.Name, volumeClientToken().Name), tokenFile),
+//			"--token-audience",
+//			issuerURL,
+//			"--kubeconfig",
+//			path.Join(volumeMounts.Path(c.Name, volumeAdminKubeconfig().Name), kas.KubeconfigKey),
+//		}
+//		c.VolumeMounts = volumeMounts.ContainerMounts(c.Name)
+//	}
+//}
+
+func buildRequestResourceRequirements(cpu, memory string) corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse(memory),
+			corev1.ResourceCPU:    resource.MustParse(cpu),
+		},
+	}
+}
+
+func containerCNOMain() *corev1.Container {
+	return &corev1.Container{
+		Name: operatorName,
+	}
+}
+
+func buildMainCNOContainer(image string, resources corev1.ResourceRequirements, args []string, envVars []corev1.EnvVar) func(*corev1.Container) {
+	return func(c *corev1.Container) {
+		c.Image = image
+		c.Command = []string{"/usr/bin/cluster-network-operator"}
+		c.Args = args
+		c.Env = envVars
+		c.Resources = resources
+		c.ImagePullPolicy = corev1.PullIfNotPresent
+		c.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
+		c.VolumeMounts = volumeMounts.ContainerMounts(c.Name)
+	}
+}
+
+func initContainerRemoveOldCNO() *corev1.Container {
+	return &corev1.Container{
+		Name: "remove-old-cno",
+	}
+}
+
+func initContainerRewriteConfig() *corev1.Container {
+	return &corev1.Container{
+		Name: "rewrite-config",
+	}
+}
+
+func initContainerRemoveOldMultusValidatingWebhookConf() *corev1.Container {
+	return &corev1.Container{
+		Name: "remove-old-multus-validating-webhook-configuration",
+	}
+}
+
+func buildRemoveOldMultusValidatingWebhookConfInitContainer(image string) func(*corev1.Container) {
+	return func(c *corev1.Container) {
+		c.Command = []string{"/bin/bash"}
+		c.Args = []string{
+			"-c",
+			`
+set -xeuo pipefail
+kc=/etc/hosted-kubernetes/kubeconfig
+sc=$(kubectl --kubeconfig $kc get --ignore-not-found validatingwebhookconfiguration multus.openshift.io -o jsonpath='{.webhooks[?(@.name == "multus-validating-config.k8s.io")].clientConfig.service}')
+if [[ -n $sc ]]; then kubectl --kubeconfig $kc delete --ignore-not-found validatingwebhookconfiguration multus.openshift.io; fi`,
+		}
+		c.Image = image
+		c.Resources = buildRequestResourceRequirements("10m", "50Mi")
+		c.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
+		c.VolumeMounts = volumeMounts.ContainerMounts(c.Name)
+	}
+}
+
+func containerKonnectivityProxy() *corev1.Container {
+	return &corev1.Container{
+		Name: konnectivityProxyName,
+	}
+}
+
+func buildKonnectivityProxyContainer(image string, resources corev1.ResourceRequirements) func(*corev1.Container) {
+	return func(c *corev1.Container) {
+		// CNO uses konnectivity-proxy to perform proxy readiness checks through the hosted cluster's network
+		c.Command = []string{"/usr/bin/control-plane-operator", "konnectivity-socks5-proxy", "--disable-resolver"}
+		c.Args = []string{"run"}
+		c.Image = image
+		c.Env = []corev1.EnvVar{{
+			Name:  "KUBECONFIG",
+			Value: "/etc/kubernetes/kubeconfig",
+		}}
+		c.Resources = resources
+		c.VolumeMounts = volumeMounts.ContainerMounts(c.Name)
+	}
+}
+
+func buildRemoveOldCNOInitContainer(image string) func(*corev1.Container) {
+	// Hack: add an initContainer that deletes the old (in-cluster) CNO first
+	// This is because the CVO doesn't "delete" objects, and we need to
+	// handle adopting existing clusters
+	return func(c *corev1.Container) {
+		c.Image = image
+		c.Command = []string{"/usr/bin/kubectl"}
+		c.Args = []string{
+			"--kubeconfig=/etc/hosted-kubernetes/kubeconfig",
+			"-n=openshift-network-operator",
+			"delete",
+			"--ignore-not-found=true",
+			"deployment",
+			"network-operator",
+		}
+		c.Resources = buildRequestResourceRequirements("10m", "50Mi")
+		c.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
+		c.VolumeMounts = volumeMounts.ContainerMounts(c.Name)
+	}
+}
+
+func buildRewriteConfigInitContainer(image string) func(*corev1.Container) {
+	return func(c *corev1.Container) {
+		// Add an InitContainer that transmutes the in-cluster config to a Kubeconfig
+		// So CNO thinks the "default" config is the hosted cluster
+		c.Command = []string{"/bin/bash"}
+		c.Args = []string{
+			"-c",
+			`
+set -xeuo pipefail
+kc=/configs/management
+kubectl --kubeconfig $kc config set clusters.default.server "https://[${KUBERNETES_SERVICE_HOST}]:${KUBERNETES_SERVICE_PORT}"
+kubectl --kubeconfig $kc config set clusters.default.certificate-authority /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+kubectl --kubeconfig $kc config set users.admin.tokenFile /var/run/secrets/kubernetes.io/serviceaccount/token
+kubectl --kubeconfig $kc config set contexts.default.cluster default
+kubectl --kubeconfig $kc config set contexts.default.user admin
+kubectl --kubeconfig $kc config set contexts.default.namespace $(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+kubectl --kubeconfig $kc config use-context default`,
+		}
+		c.Image = image
+		c.Resources = buildRequestResourceRequirements("10m", "50Mi")
+		c.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
+		c.VolumeMounts = volumeMounts.ContainerMounts(c.Name)
+	}
+}
+
+func volumeHostedKubernetes() *corev1.Volume {
+	return &corev1.Volume{
+		Name: "hosted-etc-kube",
+	}
+}
+
+func buildVolumeHostedKubernetes(v *corev1.Volume) {
+	v.Secret = &corev1.SecretVolumeSource{
+		SecretName:  manifests.KASServiceKubeconfigSecret("").Name,
+		DefaultMode: ptr.To(int32(0640)),
+	}
+}
+
+func volumeConfigs() *corev1.Volume {
+	return &corev1.Volume{
+		Name: "configs",
+	}
+}
+
+func buildVolumeConfigs(v *corev1.Volume) {
+	v.EmptyDir = &corev1.EmptyDirVolumeSource{}
+}
+
+func volumeKonnectivityProxyCert() *corev1.Volume {
+	return &corev1.Volume{
+		Name: "konnectivity-proxy-cert",
+	}
+}
+
+func buildVolumeKonnectivityProxyCert(v *corev1.Volume) {
+	v.Secret = &corev1.SecretVolumeSource{
+		SecretName:  manifests.KonnectivityClientSecret("").Name,
+		DefaultMode: ptr.To(int32(0640)),
+	}
+}
+
+func volumeKonnectivityProxyCA() *corev1.Volume {
+	return &corev1.Volume{
+		Name: "konnectivity-proxy-ca",
+	}
+}
+
+func buildVolumeKonnectivityProxyCA(v *corev1.Volume) {
+	v.ConfigMap = &corev1.ConfigMapVolumeSource{
+		LocalObjectReference: corev1.LocalObjectReference{
+			Name: manifests.KonnectivityCAConfigMap("").Name,
+		},
+		DefaultMode: ptr.To(int32(0640)),
+	}
+}
+
+func volumeAdminKubeconfig() *corev1.Volume {
+	return &corev1.Volume{
+		Name: "kubeconfig",
+	}
+}
+
+func buildCNOEnvVars(params Params) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "HYPERSHIFT", Value: "true"},
+		{Name: "HOSTED_CLUSTER_NAME", Value: params.HostedClusterName},
+		{Name: "CA_CONFIG_MAP", Value: params.CAConfigMap},
+		{Name: "CA_CONFIG_MAP_KEY", Value: params.CAConfigMapKey},
+		{Name: "TOKEN_AUDIENCE", Value: params.TokenAudience},
+
+		{Name: "RELEASE_VERSION", Value: params.ReleaseVersion},
+		{Name: "APISERVER_OVERRIDE_HOST", Value: params.APIServerAddress}, // We need to pass this down to networking components on the nodes
+		{Name: "APISERVER_OVERRIDE_PORT", Value: fmt.Sprint(params.APIServerPort)},
+		{Name: "OVN_NB_RAFT_ELECTION_TIMER", Value: "10"},
+		{Name: "OVN_SB_RAFT_ELECTION_TIMER", Value: "16"},
+		{Name: "OVN_NORTHD_PROBE_INTERVAL", Value: "5000"},
+		{Name: "OVN_CONTROLLER_INACTIVITY_PROBE", Value: "180000"},
+		{Name: "OVN_NB_INACTIVITY_PROBE", Value: "60000"},
+		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{
+				FieldPath: "metadata.name",
+			},
+		}},
+		{Name: "HOSTED_CLUSTER_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{
+				FieldPath: "metadata.namespace",
+			},
+		}},
+
+		{Name: "KUBE_PROXY_IMAGE", Value: params.Images.KubeProxy},
+		{Name: "KUBE_RBAC_PROXY_IMAGE", Value: params.Images.KubeRBACProxy},
+		{Name: "MULTUS_IMAGE", Value: params.Images.Multus},
+		{Name: "MULTUS_ADMISSION_CONTROLLER_IMAGE", Value: params.Images.MultusAdmissionController},
+		{Name: "CNI_PLUGINS_IMAGE", Value: params.Images.CNIPlugins},
+		{Name: "BOND_CNI_PLUGIN_IMAGE", Value: params.Images.BondCNIPlugin},
+		{Name: "WHEREABOUTS_CNI_IMAGE", Value: params.Images.WhereaboutsCNI},
+		{Name: "ROUTE_OVERRRIDE_CNI_IMAGE", Value: params.Images.RouteOverrideCNI},
+		{Name: "MULTUS_NETWORKPOLICY_IMAGE", Value: params.Images.MultusNetworkPolicy},
+		{Name: "OVN_IMAGE", Value: params.Images.OVN},
+		{Name: "OVN_CONTROL_PLANE_IMAGE", Value: params.Images.OVNControlPlane},
+		{Name: "EGRESS_ROUTER_CNI_IMAGE", Value: params.Images.EgressRouterCNI},
+		{Name: "NETWORK_METRICS_DAEMON_IMAGE", Value: params.Images.NetworkMetricsDaemon},
+		{Name: "NETWORK_CHECK_SOURCE_IMAGE", Value: params.Images.NetworkCheckSource},
+		{Name: "NETWORK_CHECK_TARGET_IMAGE", Value: params.Images.NetworkCheckTarget},
+		{Name: "NETWORKING_CONSOLE_PLUGIN_IMAGE", Value: params.Images.NetworkingConsolePlugin},
+		{Name: "CLOUD_NETWORK_CONFIG_CONTROLLER_IMAGE", Value: params.Images.CloudNetworkConfigController},
+		{Name: "TOKEN_MINTER_IMAGE", Value: params.Images.TokenMinter},
+		{Name: "CLI_IMAGE", Value: params.Images.CLI},
+		{Name: "SOCKS5_PROXY_IMAGE", Value: params.Images.Socks5Proxy},
+		{Name: "OPENSHIFT_RELEASE_IMAGE", Value: params.DeploymentConfig.AdditionalAnnotations[hyperv1.ReleaseImageAnnotation]},
+	}
 }

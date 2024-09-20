@@ -1,6 +1,7 @@
 package cno
 
 import (
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -143,6 +144,47 @@ func TestReconcileRole(t *testing.T) {
 			err := ReconcileRole(tt.args.role, tt.args.ownerRef, tt.args.networkType)
 			g.Expect(err).To(BeNil())
 			g.Expect(tt.args.role.Rules).To(BeEquivalentTo(expectedRules(tt.args.networkType)))
+		})
+	}
+}
+
+func TestGetRequestResourceRequirements(t *testing.T) {
+	tests := []struct {
+		name   string
+		cpu    string
+		memory string
+		want   *corev1.ResourceRequirements
+	}{
+		{
+			name:   "Valid CPU and Memory",
+			cpu:    "500m",
+			memory: "256Mi",
+			want: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("256Mi"),
+					corev1.ResourceCPU:    resource.MustParse("500m"),
+				},
+			},
+		},
+		{
+			name:   "Zero CPU and Memory",
+			cpu:    "0",
+			memory: "0",
+			want: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("0"),
+					corev1.ResourceCPU:    resource.MustParse("0"),
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildRequestResourceRequirements(tt.cpu, tt.memory)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("buildRequestResourceRequirements() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
