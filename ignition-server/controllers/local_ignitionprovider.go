@@ -77,6 +77,12 @@ type LocalIgnitionProvider struct {
 	lock sync.Mutex
 }
 
+type Command struct {
+	Bin   string
+	Args  []string
+	Image string
+}
+
 var _ IgnitionProvider = (*LocalIgnitionProvider)(nil)
 
 const pullSecretName = "pull-secret"
@@ -258,6 +264,7 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 		if err := registryclient.ExtractImageFilesToDir(ctx, releaseImage, pullSecret, "release-manifests/image-references", configDir); err != nil {
 			return fmt.Errorf("failed to extract image-references: %w", err)
 		}
+
 		log.Info("extracted image-references", "time", time.Since(start).Round(time.Second).String())
 		return nil
 	}()
@@ -285,6 +292,7 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 		if err := os.WriteFile(filepath.Join(mcoBaseDir, "cloud.conf.configmap.yaml"), cloudConfYaml, 0644); err != nil {
 			return nil, fmt.Errorf("failed to write bootstrap kubeconfig: %w", err)
 		}
+		log.Info("[DEBUG] extracted cloud config yaml", "CloudConfig", cloudConfYaml)
 	}
 
 	// Extract template files from the MCO image to the MCC input directory
@@ -299,6 +307,13 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract templates from image: %w", err)
 	}
+	// DEBUG
+	log.Info("[DEBUG] extracted files")
+	entries, _ := os.ReadDir("etc/mcc/templates/")
+	for _, e := range entries {
+		fmt.Println(e.Name())
+	}
+	log.Info("[DEBUG] extracted files Ended")
 
 	payloadVersion, err := semver.Parse(imageProvider.Version())
 	if err != nil {
@@ -370,6 +385,7 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 			invokeFeatureGateRenderScript(filepath.Join(binDir, clusterConfigComponent), filepath.Join(workDir, clusterConfigComponentShort), mccBaseDir, payloadVersion, string(featureGateBytes)),
 		}
 
+		log.Info("[DEBUG] Executing command for cluster config component", "bin", "/bin/bash", "args", args)
 		cmd := exec.CommandContext(ctx, "/bin/bash", args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -460,6 +476,7 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 		}
 
 		start := time.Now()
+		log.Info("[DEBUG] Executing command MCO", "binDir", binDir, "Bin", "machine-config-operator", "args", args)
 		cmd := exec.CommandContext(ctx, filepath.Join(binDir, "machine-config-operator"), args...)
 		out, err := cmd.CombinedOutput()
 		log.Info("machine-config-operator process completed", "time", time.Since(start).Round(time.Second).String(), "output", string(out))
@@ -474,16 +491,21 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 
 		// Copy output to the MCC base directory
 		bootstrapManifestsDir := filepath.Join(destDir, "bootstrap", "manifests")
+		log.Info("[DEBUG] Copy output to the MCC base directory", "DestDir", destDir, "Bin", "bootstrap", "args", "manifests", "Manifests Dir", bootstrapManifestsDir)
 		manifests, err := os.ReadDir(bootstrapManifestsDir)
 		if err != nil {
 			return fmt.Errorf("failed to read dir: %w", err)
 		}
+
+		log.Info("[DEBUG] Listing Bootstrap files")
 		for _, fd := range manifests {
+			log.Info("[DEBUG] Bootstrap file: ", "Name", fd.Name())
 			src := path.Join(bootstrapManifestsDir, fd.Name())
 			dst := path.Join(mccBaseDir, fd.Name())
 			if fd.IsDir() {
 				continue
 			}
+			log.Info("[DEBUG] Copying file:", "Src", src, "Dst", dst)
 			if err := copyFile(src, dst); err != nil {
 				return fmt.Errorf("failed to copy %s to %s: %w", src, dst, err)
 			}
@@ -496,8 +518,11 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 			if err != nil {
 				return fmt.Errorf("failed to list dir %s: %w", configDir, err)
 			}
+
+			log.Info("[DEBUG] Copy machineconfigpool config data to the MCC input directory")
 			for _, src := range matches {
 				dst := filepath.Join(mccBaseDir, filepath.Base(src))
+				log.Info("[DEBUG] Copying file:", "Src", src, "Dst", dst)
 				if err := copyFile(src, dst); err != nil {
 					return fmt.Errorf("failed to copy %s to %s: %w", src, dst, err)
 				}
@@ -517,6 +542,7 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 	// for the MCS.
 	err = func() error {
 		start := time.Now()
+		log.Info("[DEBUG] run the MCC using templates and MCO output as input, producing output for the MCS")
 
 		// copy the image config out of the configDir and into the mccBaseDir
 		if err := copyFile(filepath.Join(configDir, "image-config.yaml"), filepath.Join(mccBaseDir, "image-config.yaml")); err != nil {
@@ -538,6 +564,7 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 			)
 		}
 
+		log.Info("[DEBUG] Executing command MCC", "binDir", binDir, "Bin", "machine-config-controller", "args", args)
 		cmd := exec.CommandContext(ctx, filepath.Join(binDir, "machine-config-controller"), args...)
 		out, err := cmd.CombinedOutput()
 		log.Info("machine-config-controller process completed", "time", time.Since(start).Round(time.Second).String(), "output", string(out))
@@ -601,6 +628,7 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 		// the function returns
 		mcsCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
+		log.Info("[DEBUG] Executing command MCS", "binDir", binDir, "Bin", "machine-config-server", "args", args)
 		cmd := exec.CommandContext(mcsCtx, filepath.Join(binDir, "machine-config-server"), args...)
 		go func() {
 			out, err := cmd.CombinedOutput()
@@ -654,6 +682,322 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 	}
 
 	return payload, nil
+}
+
+func (p *LocalIgnitionProvider) GetPayloadV2(ctx context.Context, releaseImage, customConfig, pullSecretHash, additionalTrustBundleHash, hcConfigurationHash string) ([]byte, error) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	log := ctrl.Log.WithName("get-payload")
+
+	// Fetch the pull secret contents
+	pullSecret, err := func() ([]byte, error) {
+		secret := &corev1.Secret{}
+		if err := p.Client.Get(ctx, client.ObjectKey{Namespace: p.Namespace, Name: pullSecretName}, secret); err != nil {
+			return nil, fmt.Errorf("failed to get pull secret: %w", err)
+		}
+		data, exists := secret.Data[corev1.DockerConfigJsonKey]
+		if !exists {
+			return nil, fmt.Errorf("pull secret missing %q key", corev1.DockerConfigJsonKey)
+		}
+		return data, nil
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pull secret: %w", err)
+	}
+
+	// Verify the pullSecret hash matches the passed-in parameter pullSecretHash to ensure the correct pull secret gets loaded into the payload
+	if pullSecretHash != "" && util.HashSimple(pullSecret) != pullSecretHash {
+		return nil, fmt.Errorf("pull secret does not match hash")
+	}
+
+	additionalTrustBundle := ""
+	atbCM := &corev1.ConfigMap{}
+
+	cmExists := true
+	if err = p.Client.Get(ctx, client.ObjectKey{Namespace: p.Namespace, Name: additionalTrustBundleName}, atbCM); err != nil {
+		if errors.IsNotFound(err) {
+			cmExists = false
+		} else {
+			return nil, fmt.Errorf("failed to get additionalTrustBundle configmap: %w", err)
+		}
+	}
+
+	if cmExists {
+		data, exists := atbCM.Data["ca-bundle.crt"]
+		if !exists {
+			return nil, fmt.Errorf("additionalTrustBundle configmap missing %q key", "ca-bundle.crt")
+		}
+		additionalTrustBundle = data
+	}
+	if additionalTrustBundleHash != "" && util.HashSimple(additionalTrustBundle) != additionalTrustBundleHash {
+		return nil, fmt.Errorf("additionalTrustBundle does not match hash")
+	}
+
+	// Fetch the bootstrap kubeconfig contents
+	bootstrapKubeConfig, err := func() ([]byte, error) {
+		secret := &corev1.Secret{}
+		if err := p.Client.Get(ctx, client.ObjectKey{Namespace: p.Namespace, Name: "bootstrap-kubeconfig"}, secret); err != nil {
+			return nil, fmt.Errorf("failed to get bootstrap kubeconfig secret: %w", err)
+		}
+		data, exists := secret.Data["kubeconfig"]
+		if !exists {
+			return nil, fmt.Errorf("bootstrap kubeconfig secret missing kubeconfig key")
+		}
+		return data, nil
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bootstrap kubeconfig: %w", err)
+	}
+
+	// Fetch the MCS config
+	mcsConfig := &corev1.ConfigMap{}
+	if err := p.Client.Get(ctx, client.ObjectKey{Namespace: p.Namespace, Name: "machine-config-server"}, mcsConfig); err != nil {
+		return nil, fmt.Errorf("failed to get machine-config-server configmap: %w", err)
+	}
+
+	// Verify the MCS configmap is up-to-date
+	if hcConfigurationHash != "" && mcsConfig.Data["configuration-hash"] != hcConfigurationHash {
+		return nil, fmt.Errorf("machine-config-server configmap is out of date, waiting for update %s != %s", mcsConfig.Data["configuration-hash"], hcConfigurationHash)
+	}
+
+	userCaBundleConfigCM := &corev1.ConfigMap{}
+	if err := yaml.Unmarshal([]byte(mcsConfig.Data["user-ca-bundle-config.yaml"]), &userCaBundleConfigCM); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal user-ca-bundle-config.yaml: %w", err)
+	}
+
+	// Verify that all the keys and values from additionalTrustBundle are in the user-ca-bundle-config.yaml
+	if atbCM.Data != nil {
+		for key, value := range atbCM.Data {
+			if userCaBundleConfigCM.Data[key] != value {
+				return nil, fmt.Errorf("user-ca-bundle-config.yaml in machine-config-server configmap does not contain all additionalTrustBundles")
+			}
+		}
+	}
+
+	// Look up the release image metadata
+	imageProvider, err := func() (*imageprovider.SimpleReleaseImageProvider, error) {
+		img, err := p.ReleaseProvider.Lookup(ctx, releaseImage, pullSecret)
+		if err != nil {
+			return nil, fmt.Errorf("failed to look up release image metadata: %w", err)
+		}
+		return imageprovider.New(img), nil
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get component images: %v", err)
+	}
+
+	component := "machine-config-operator"
+	mcoImage, hasMcoImage := imageProvider.ImageExist(component)
+	if !hasMcoImage {
+		return nil, fmt.Errorf("release image does not contain machine-config-operator (images: %v)", imageProvider.ComponentImages())
+	}
+
+	mcoImage, err = registryclient.GetCorrectArchImage(ctx, component, mcoImage, pullSecret)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("discovered machine-config-operator image", "image", mcoImage)
+
+	// Set up the base working directory
+	workDir, err := os.MkdirTemp(p.WorkDir, "get-payload")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create working directory: %w", err)
+	}
+	if !p.PreserveOutput {
+		defer func() {
+			if err := os.RemoveAll(workDir); err != nil {
+				log.Error(err, "failed to delete working directory", "dir", workDir)
+			}
+		}()
+	}
+	log.Info("created working directory", "dir", workDir)
+
+	// Prepare all the working subdirectories
+	// They will hold the output of the MCO, MCC, and MCS processes
+	mcoBaseDir := filepath.Join(workDir, "mco")
+	mccBaseDir := filepath.Join(workDir, "mcc")
+	mcsBaseDir := filepath.Join(workDir, "mcs")
+	configDir := filepath.Join(workDir, "config")
+	for _, dir := range []string{mcoBaseDir, mccBaseDir, mcsBaseDir, configDir} {
+		if err := os.Mkdir(dir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to make directory %s: %w", dir, err)
+		}
+	}
+
+	// Write out the custom config to the MCC directory
+	if err := os.WriteFile(filepath.Join(mccBaseDir, "custom.yaml"), []byte(customConfig), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write mcc config: %w", err)
+	}
+	// Write out the bootstrap kubeconfig to the MCS directory
+	if err := os.WriteFile(filepath.Join(mcsBaseDir, "kubeconfig"), bootstrapKubeConfig, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write bootstrap kubeconfig: %w", err)
+	}
+	// Extract MCS config files into the config directory
+	for name, contents := range mcsConfig.Data {
+		if name == "configuration-hash" {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(configDir, name), []byte(contents), 0644); err != nil {
+			return nil, fmt.Errorf("failed to write MCS config file %q: %w", name, err)
+		}
+	}
+
+	// Extract ImageReferences from release image to config directory
+	err = func() error {
+		start := time.Now()
+
+		// Replace the release image with the mirrored release image in disconnected environment cases.
+		// ProviderWithOpenShiftImageRegistryOverrides Lookup will store the mirrored release image if it exists.
+		_, err := p.ReleaseProvider.Lookup(ctx, releaseImage, pullSecret)
+		if err != nil {
+			return fmt.Errorf("failed to look up release image metadata: %w", err)
+		}
+		if p.ReleaseProvider.GetMirroredReleaseImage() != "" {
+			releaseImage = p.ReleaseProvider.GetMirroredReleaseImage()
+			log.Info("using mirrored release image", "releaseImage", releaseImage)
+		}
+
+		if err := registryclient.ExtractImageFilesToDir(ctx, releaseImage, pullSecret, "release-manifests/image-references", configDir); err != nil {
+			return fmt.Errorf("failed to extract image-references: %w", err)
+		}
+		log.Info("extracted image-references", "time", time.Since(start).Round(time.Second).String())
+		return nil
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract image-references from image: %w", err)
+	}
+
+	// For Azure and OpenStack, extract the cloud provider config file as MCO input
+	if p.CloudProvider == hyperv1.AzurePlatform || p.CloudProvider == hyperv1.OpenStackPlatform {
+		cloudConfigMap := &corev1.ConfigMap{}
+		switch p.CloudProvider {
+		case hyperv1.AzurePlatform:
+			if err := p.Client.Get(ctx, client.ObjectKey{Namespace: p.Namespace, Name: manifests.AzureProviderConfig("").Name}, cloudConfigMap); err != nil {
+				return nil, fmt.Errorf("failed to get cloud provider configmap: %w", err)
+			}
+		case hyperv1.OpenStackPlatform:
+			if err := p.Client.Get(ctx, client.ObjectKey{Namespace: p.Namespace, Name: manifests.OpenStackProviderConfig("").Name}, cloudConfigMap); err != nil {
+				return nil, fmt.Errorf("failed to get cloud provider configmap: %w", err)
+			}
+		}
+		cloudConfYaml, err := yaml.Marshal(cloudConfigMap)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal cloud config: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(mcoBaseDir, "cloud.conf.configmap.yaml"), cloudConfYaml, 0644); err != nil {
+			return nil, fmt.Errorf("failed to write bootstrap kubeconfig: %w", err)
+		}
+	}
+
+	// Extract template files from the MCO image to the MCC input directory
+	err = func() error {
+		start := time.Now()
+		if err := registryclient.ExtractImageFilesToDir(ctx, mcoImage, pullSecret, "etc/mcc/templates/*", mccBaseDir); err != nil {
+			return fmt.Errorf("failed to extract mcc templates: %w", err)
+		}
+		log.Info("extracted templates", "time", time.Since(start).Round(time.Second).String())
+		return nil
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract templates from image: %w", err)
+	}
+
+	payloadVersion, err := semver.Parse(imageProvider.Version())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse payload version: %w", err)
+	}
+
+	// Set the component to the correct binary name and file path based on the payload version
+	clusterConfigComponent := "cluster-config-api"
+	clusterConfigComponentShort := "cca"
+	//clusterConfigFile := "usr/bin/render"
+
+	if payloadVersion.Major == 4 && payloadVersion.Minor < 15 {
+		clusterConfigComponent = "cluster-config-operator"
+		clusterConfigComponentShort = "cco"
+		//		clusterConfigFile = "usr/bin/cluster-config-operator"
+	}
+
+	var (
+		pre []Command
+		cca Command
+	)
+
+	{
+		clusterConfigImage, ok := imageProvider.ImageExist(clusterConfigComponent)
+		if !ok {
+			return []byte{}, fmt.Errorf("release image does not contain $%s (images: %v)", clusterConfigComponent, imageProvider.ComponentImages())
+		}
+
+		clusterConfigImage, err = registryclient.GetCorrectArchImage(ctx, clusterConfigComponent, clusterConfigImage, pullSecret)
+		if err != nil {
+			return []byte{}, err
+		}
+
+		log.Info(fmt.Sprintf("discovered  image %s image %v", clusterConfigComponent, clusterConfigImage))
+
+		// Generate the command to render the cluster config files. The command and args should
+		// sent to the HTTP server to render the needed files for MCC.
+		featureGateBytes, err := os.ReadFile(p.FeatureGateManifest)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read feature gate: %w", err)
+		}
+
+		// The pre commands are the commands that need to be run before the other commands to generate the payload.
+		pre = append(pre,
+			Command{
+				Bin: "mkdir",
+				Args: []string{
+					"-p",
+					fmt.Sprintf("%s/{input, output, manifests}", workDir),
+				},
+			},
+			Command{
+				Bin: "echo",
+				Args: []string{
+					string(featureGateBytes),
+					fmt.Sprintf("> %s/99_feature-gate.yaml", mccBaseDir),
+				},
+			},
+		)
+
+		// Cluster Config API command to be added to the REST request for ignition payload generation
+		cca = Command{
+			Bin:   clusterConfigComponent,
+			Args:  []string{},
+			Image: clusterConfigImage,
+		}
+
+		switch {
+		case payloadVersion.Minor == 15:
+			cca.Args = append(cca.Args,
+				"render",
+				fmt.Sprintf("--config-output-file=config"),
+				fmt.Sprintf("--asset-input-dir=%s/input", filepath.Join(workDir, clusterConfigComponentShort)),
+				fmt.Sprintf("--asset-output-dir=%s/output", filepath.Join(workDir, clusterConfigComponentShort)),
+				fmt.Sprintf("--rendered-manifest-files=%s/manifests", workDir),
+				fmt.Sprintf("--payload-version=%s", payloadVersion),
+			)
+		case payloadVersion.Minor < 14:
+			cca.Args = append(cca.Args,
+				"render",
+				fmt.Sprintf("--config-output-file=config"),
+				fmt.Sprintf("--asset-input-dir=%s/input", filepath.Join(workDir, clusterConfigComponentShort)),
+				fmt.Sprintf("--asset-output-dir=%s/output", filepath.Join(workDir, clusterConfigComponentShort)),
+			)
+		default:
+			cca.Args = append(cca.Args,
+				fmt.Sprintf("--asset-output-dir=%s/output", filepath.Join(workDir, clusterConfigComponentShort)),
+				fmt.Sprintf("--image-manifests=input"),
+				fmt.Sprintf("--rendered-manifest-files=%s/manifests", workDir),
+				fmt.Sprintf("--cluster-profile=ibm-cloud-managed"),
+				fmt.Sprintf("--payload-version=%s", payloadVersion),
+			)
+		}
+	}
+
+	return nil, nil
 }
 
 func (r *LocalIgnitionProvider) reconcileValidReleaseInfoCondition(ctx context.Context, releaseImageProvider *imageprovider.SimpleReleaseImageProvider) error {
@@ -750,7 +1094,7 @@ EOF
    --asset-input-dir %[2]s/input \
    --asset-output-dir %[2]s/output \
    --rendered-manifest-files=%[2]s/manifests \
-   --payload-version=%[4]s 
+   --payload-version=%[4]s
 cp %[2]s/manifests/99_feature-gate.yaml %[3]s/99_feature-gate.yaml
 `
 	}

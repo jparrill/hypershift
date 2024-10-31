@@ -26,6 +26,7 @@ type RunLocalIgnitionProviderOptions struct {
 	TokenSecret         string
 	WorkDir             string
 	FeatureGateManifest string
+	MCOWorkflowV2       bool
 }
 
 func NewRunLocalIgnitionProviderCommand() *cobra.Command {
@@ -36,11 +37,15 @@ func NewRunLocalIgnitionProviderCommand() *cobra.Command {
 
 	opts := RunLocalIgnitionProviderOptions{}
 
+	// REMOVE BEFORE MERGE
+	//opts.MCOWorkflowV2 = true
+
 	cmd.Flags().StringVar(&opts.Namespace, "namespace", opts.Namespace, "Namespace")
 	cmd.Flags().StringVar(&opts.Image, "image", opts.Image, "Release image")
 	cmd.Flags().StringVar(&opts.TokenSecret, "token-secret", opts.TokenSecret, "Token secret name")
 	cmd.Flags().StringVar(&opts.WorkDir, "dir", opts.WorkDir, "Working directory (default: temporary dir)")
 	cmd.Flags().StringVar(&opts.FeatureGateManifest, "feature-gate-manifest", opts.FeatureGateManifest, "Path to a rendered featuregates.config.openshift.io/v1 manifest")
+	cmd.Flags().BoolVar(&opts.MCOWorkflowV2, "mco-workflow-v2", opts.MCOWorkflowV2, "Use MCO workflow v2")
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -93,8 +98,18 @@ func (o *RunLocalIgnitionProviderOptions) Run(ctx context.Context) error {
 	}
 
 	p := &controllers.LocalIgnitionProvider{
-		Client:              cl,
-		ReleaseProvider:     &releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator{},
+		Client: cl,
+		//ReleaseProvider:     &releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator{},
+		ReleaseProvider: &releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator{
+			Delegate: &releaseinfo.RegistryMirrorProviderDecorator{
+				Delegate: &releaseinfo.CachedProvider{
+					Inner: &releaseinfo.RegistryClientProvider{},
+					Cache: map[string]*releaseinfo.ReleaseImage{},
+				},
+				RegistryOverrides: map[string]string{},
+			},
+			OpenShiftImageRegistryOverrides: map[string][]string{},
+		},
 		CloudProvider:       "",
 		Namespace:           o.Namespace,
 		WorkDir:             o.WorkDir,
@@ -103,7 +118,17 @@ func (o *RunLocalIgnitionProviderOptions) Run(ctx context.Context) error {
 		FeatureGateManifest: o.FeatureGateManifest,
 	}
 
-	payload, err := p.GetPayload(ctx, o.Image, config.String(), "", "", "")
+	var (
+		payload []byte
+	)
+
+	switch o.MCOWorkflowV2 {
+	case true:
+		payload, err = p.GetPayloadV2(ctx, o.Image, config.String(), "", "", "")
+	default:
+		payload, err = p.GetPayload(ctx, o.Image, config.String(), "", "", "")
+	}
+
 	if err != nil {
 		return err
 	}

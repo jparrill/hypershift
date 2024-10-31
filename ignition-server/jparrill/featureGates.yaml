@@ -1,0 +1,90 @@
+apiVersion: config.openshift.io/v1
+kind: FeatureGate
+metadata:
+  annotations:
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"config.openshift.io/v1","kind":"FeatureGate","metadata":{"annotations":{"include.release.openshift.io/ibm-cloud-managed":"true"},"creationTimestamp":null,"name":"cluster"},"spec":{},"status":{"featureGates":[{"disabled":[{"name":"AutomatedEtcdBackup"},{"name":"CSIDriverSharedResource"},{"name":"ChunkSizeMiB"},{"name":"ClusterAPIInstall"},{"name":"ClusterAPIInstallAzure"},{"name":"ClusterAPIInstallGCP"},{"name":"ClusterAPIInstallIBMCloud"},{"name":"ClusterAPIInstallPowerVS"},{"name":"DNSNameResolver"},{"name":"DynamicResourceAllocation"},{"name":"EtcdBackendQuota"},{"name":"EventedPLEG"},{"name":"Example"},{"name":"ExternalRouteCertificate"},{"name":"GCPClusterHostedDNS"},{"name":"GCPLabelsTags"},{"name":"GatewayAPI"},{"name":"ImagePolicy"},{"name":"InsightsConfig"},{"name":"InsightsConfigAPI"},{"name":"InsightsOnDemandDataGather"},{"name":"InstallAlternateInfrastructureAWS"},{"name":"MachineAPIOperatorDisableMachineHealthCheckController"},{"name":"MachineAPIProviderOpenStack"},{"name":"MachineConfigNodes"},{"name":"ManagedBootImages"},{"name":"MaxUnavailableStatefulSet"},{"name":"MetricsCollectionProfiles"},{"name":"MixedCPUsAllocation"},{"name":"NewOLM"},{"name":"NodeDisruptionPolicy"},{"name":"NodeSwap"},{"name":"OnClusterBuild"},{"name":"OpenShiftPodSecurityAdmission"},{"name":"PinnedImages"},{"name":"PlatformOperators"},{"name":"RouteExternalCertificate"},{"name":"ServiceAccountTokenNodeBinding"},{"name":"ServiceAccountTokenNodeBindingValidation"},{"name":"ServiceAccountTokenPodNodeInfo"},{"name":"SignatureStores"},{"name":"SigstoreImageVerification"},{"name":"TranslateStreamCloseWebsocketRequests"},{"name":"UpgradeStatus"},{"name":"VSphereMultiVCenters"},{"name":"ValidatingAdmissionPolicy"},{"name":"VolumeGroupSnapshot"}],"enabled":[{"name":"AdminNetworkPolicy"},{"name":"AlibabaPlatform"},{"name":"AzureWorkloadIdentity"},{"name":"BareMetalLoadBalancer"},{"name":"BuildCSIVolumes"},{"name":"CloudDualStackNodeIPs"},{"name":"ClusterAPIInstallAWS"},{"name":"ClusterAPIInstallNutanix"},{"name":"ClusterAPIInstallOpenStack"},{"name":"ClusterAPIInstallVSphere"},{"name":"DisableKubeletCloudCredentialProviders"},{"name":"ExternalCloudProvider"},{"name":"ExternalCloudProviderAzure"},{"name":"ExternalCloudProviderExternal"},{"name":"ExternalCloudProviderGCP"},{"name":"ExternalOIDC"},{"name":"HardwareSpeed"},{"name":"KMSv1"},{"name":"MetricsServer"},{"name":"NetworkDiagnosticsConfig"},{"name":"NetworkLiveMigration"},{"name":"PrivateHostedZoneAWS"},{"name":"VSphereControlPlaneMachineSet"},{"name":"VSphereDriverConfiguration"},{"name":"VSphereStaticIPs"}],"version":"4.16.5"}]}}
+  creationTimestamp: "2024-09-17T10:37:29Z"
+  generation: 1
+  name: cluster
+  resourceVersion: "270"
+  uid: 10ed2c75-bb36-41b7-8a7a-82ff621b2113
+spec: {}
+status:
+  featureGates:
+  - disabled:
+    - name: AutomatedEtcdBackup
+    - name: CSIDriverSharedResource
+    - name: ChunkSizeMiB
+    - name: ClusterAPIInstall
+    - name: ClusterAPIInstallAzure
+    - name: ClusterAPIInstallGCP
+    - name: ClusterAPIInstallIBMCloud
+    - name: ClusterAPIInstallPowerVS
+    - name: DNSNameResolver
+    - name: DynamicResourceAllocation
+    - name: EtcdBackendQuota
+    - name: EventedPLEG
+    - name: Example
+    - name: ExternalRouteCertificate
+    - name: GCPClusterHostedDNS
+    - name: GCPLabelsTags
+    - name: GatewayAPI
+    - name: ImagePolicy
+    - name: InsightsConfig
+    - name: InsightsConfigAPI
+    - name: InsightsOnDemandDataGather
+    - name: InstallAlternateInfrastructureAWS
+    - name: MachineAPIOperatorDisableMachineHealthCheckController
+    - name: MachineAPIProviderOpenStack
+    - name: MachineConfigNodes
+    - name: ManagedBootImages
+    - name: MaxUnavailableStatefulSet
+    - name: MetricsCollectionProfiles
+    - name: MixedCPUsAllocation
+    - name: NewOLM
+    - name: NodeDisruptionPolicy
+    - name: NodeSwap
+    - name: OnClusterBuild
+    - name: OpenShiftPodSecurityAdmission
+    - name: PinnedImages
+    - name: PlatformOperators
+    - name: RouteExternalCertificate
+    - name: ServiceAccountTokenNodeBinding
+    - name: ServiceAccountTokenNodeBindingValidation
+    - name: ServiceAccountTokenPodNodeInfo
+    - name: SignatureStores
+    - name: SigstoreImageVerification
+    - name: TranslateStreamCloseWebsocketRequests
+    - name: UpgradeStatus
+    - name: VSphereMultiVCenters
+    - name: ValidatingAdmissionPolicy
+    - name: VolumeGroupSnapshot
+    enabled:
+    - name: AdminNetworkPolicy
+    - name: AlibabaPlatform
+    - name: AzureWorkloadIdentity
+    - name: BareMetalLoadBalancer
+    - name: BuildCSIVolumes
+    - name: CloudDualStackNodeIPs
+    - name: ClusterAPIInstallAWS
+    - name: ClusterAPIInstallNutanix
+    - name: ClusterAPIInstallOpenStack
+    - name: ClusterAPIInstallVSphere
+    - name: DisableKubeletCloudCredentialProviders
+    - name: ExternalCloudProvider
+    - name: ExternalCloudProviderAzure
+    - name: ExternalCloudProviderExternal
+    - name: ExternalCloudProviderGCP
+    - name: ExternalOIDC
+    - name: HardwareSpeed
+    - name: KMSv1
+    - name: MetricsServer
+    - name: NetworkDiagnosticsConfig
+    - name: NetworkLiveMigration
+    - name: PrivateHostedZoneAWS
+    - name: VSphereControlPlaneMachineSet
+    - name: VSphereDriverConfiguration
+    - name: VSphereStaticIPs
+    version: 4.16.5
