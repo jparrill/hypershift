@@ -116,6 +116,8 @@ func GetAllImageRegistryMirrors(ctx context.Context, client client.Client, mgmtC
 		}
 	}
 
+	fmt.Println("mgmtClusterRegistryOverrides: ", mgmtClusterRegistryOverrides)
+
 	return mgmtClusterRegistryOverrides, nil
 }
 

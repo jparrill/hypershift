@@ -1043,9 +1043,15 @@ func (r *HostedClusterReconciler) reconcile(ctx context.Context, req ctrl.Reques
 			meta.SetStatusCondition(&hcluster.Status.Conditions, condition)
 		}
 	}
+	releaseImage, err := r.lookupReleaseImage(ctx, hcluster, releaseProvider)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to lookup release image: %w", err)
+	}
+	log.Info("[DEBUG] - Release Image", "releaseImage", releaseImage)
 
 	// Set HostedCluster payload arch
-	payloadArch, err := hyperutil.DetermineHostedClusterPayloadArch(ctx, r.Client, hcluster, registryClientImageMetadataProvider)
+	log.Info("[DEBUG] - Determining hosted cluster payload arch")
+	payloadArch, err := hyperutil.DetermineHostedClusterPayloadArch(ctx, r.Client, hcluster, releaseImage, registryClientImageMetadataProvider)
 	if err != nil {
 		condition := metav1.Condition{
 			Type:               string(hyperv1.ValidReleaseImage),
@@ -1060,11 +1066,6 @@ func (r *HostedClusterReconciler) reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	hcluster.Status.PayloadArch = payloadArch
-
-	releaseImage, err := r.lookupReleaseImage(ctx, hcluster, releaseProvider)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to lookup release image: %w", err)
-	}
 	// Set Progressing condition
 	{
 		condition := metav1.Condition{
