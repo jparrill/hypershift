@@ -22,6 +22,7 @@ import (
 	"github.com/openshift/hypershift/support/releaseinfo/registryclient"
 
 	ignitionapi "github.com/coreos/ignition/v2/config/v3_2/types"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -388,7 +389,7 @@ func GetMgmtClusterCPUArch(kc kubeclient.Interface) (string, error) {
 }
 
 // DetermineHostedClusterPayloadArch returns the HostedCluster payload's CPU architecture type
-func DetermineHostedClusterPayloadArch(ctx context.Context, c client.Client, hc *hyperv1.HostedCluster, imageMetadataProvider ImageMetadataProvider) (hyperv1.PayloadArchType, error) {
+func DetermineHostedClusterPayloadArch(ctx context.Context, c client.Client, hc *hyperv1.HostedCluster, imageMetadataProvider metadataprovider.ImageMetadataProvider) (hyperv1.PayloadArchType, error) {
 	var pullSecret corev1.Secret
 	if err := c.Get(ctx, types.NamespacedName{Namespace: hc.Namespace, Name: hc.Spec.PullSecret.Name}, &pullSecret); err != nil {
 		return "", fmt.Errorf("failed to get pull secret: %w", err)
@@ -414,7 +415,7 @@ func DetermineHostedClusterPayloadArch(ctx context.Context, c client.Client, hc 
 	return arch, nil
 }
 
-func getImageArchitecture(ctx context.Context, image string, pullSecretBytes []byte, imageMetadataProvider ImageMetadataProvider) (hyperv1.PayloadArchType, error) {
+func getImageArchitecture(ctx context.Context, image string, pullSecretBytes []byte, imageMetadataProvider metadataprovider.ImageMetadataProvider) (hyperv1.PayloadArchType, error) {
 	imageMetadata, err := imageMetadataProvider.ImageMetadata(ctx, image, pullSecretBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to look up image metadata for %s: %w", image, err)

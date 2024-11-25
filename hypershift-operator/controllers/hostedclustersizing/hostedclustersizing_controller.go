@@ -11,6 +11,7 @@ import (
 	hypershiftv1beta1applyconfigurations "github.com/openshift/hypershift/client/applyconfiguration/hypershift/v1beta1"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	"github.com/openshift/hypershift/support/releaseinfo"
 	hyperutil "github.com/openshift/hypershift/support/util"
 	corev1 "k8s.io/api/core/v1"
@@ -37,7 +38,7 @@ func newReconciler(
 	now func() time.Time,
 	hypershiftOperatorImage string,
 	releaseProvider *releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator,
-	imageMetadataProvider *hyperutil.RegistryClientImageMetadataProvider,
+	imageMetadataProvider *metadataprovider.RegistryClientImageMetadataProvider,
 ) *reconciler {
 	return &reconciler{
 		client: hypershiftClient,

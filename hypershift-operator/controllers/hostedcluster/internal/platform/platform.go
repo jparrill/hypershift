@@ -14,9 +14,9 @@ import (
 	"github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster/internal/platform/none"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster/internal/platform/openstack"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster/internal/platform/powervs"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	"github.com/openshift/hypershift/support/releaseinfo"
 	"github.com/openshift/hypershift/support/upsert"
-	imgUtil "github.com/openshift/hypershift/support/util"
 
 	appsv1 "k8s.io/api/apps/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -90,11 +90,11 @@ func GetPlatform(ctx context.Context, hcluster *hyperv1.HostedCluster, releasePr
 	switch hcluster.Spec.Platform.Type {
 	case hyperv1.AWSPlatform:
 		if pullSecretBytes != nil {
-			capiImageProvider, err = imgUtil.GetPayloadImage(ctx, releaseProvider, hcluster, AWSCAPIProvider, pullSecretBytes)
+			capiImageProvider, err = metadataprovider.GetPayloadImage(ctx, releaseProvider, hcluster, AWSCAPIProvider, pullSecretBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to retrieve capi image: %w", err)
 			}
-			payloadVersion, err = imgUtil.GetPayloadVersion(ctx, releaseProvider, hcluster, pullSecretBytes)
+			payloadVersion, err = metadataprovider.GetPayloadVersion(ctx, releaseProvider, hcluster, pullSecretBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to fetch payload version: %w", err)
 			}
@@ -110,7 +110,7 @@ func GetPlatform(ctx context.Context, hcluster *hyperv1.HostedCluster, releasePr
 		platform = &kubevirt.Kubevirt{}
 	case hyperv1.AzurePlatform:
 		if pullSecretBytes != nil {
-			capiImageProvider, err = imgUtil.GetPayloadImage(ctx, releaseProvider, hcluster, AzureCAPIProvider, pullSecretBytes)
+			capiImageProvider, err = metadataprovider.GetPayloadImage(ctx, releaseProvider, hcluster, AzureCAPIProvider, pullSecretBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to retrieve capi image: %w", err)
 			}
@@ -118,7 +118,7 @@ func GetPlatform(ctx context.Context, hcluster *hyperv1.HostedCluster, releasePr
 		platform = azure.New(capiImageProvider)
 	case hyperv1.PowerVSPlatform:
 		if pullSecretBytes != nil {
-			capiImageProvider, err = imgUtil.GetPayloadImage(ctx, releaseProvider, hcluster, PowerVSCAPIProvider, pullSecretBytes)
+			capiImageProvider, err = metadataprovider.GetPayloadImage(ctx, releaseProvider, hcluster, PowerVSCAPIProvider, pullSecretBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to retrieve capi image: %w", err)
 			}
@@ -126,7 +126,7 @@ func GetPlatform(ctx context.Context, hcluster *hyperv1.HostedCluster, releasePr
 		platform = powervs.New(capiImageProvider)
 	case hyperv1.OpenStackPlatform:
 		if pullSecretBytes != nil {
-			capiImageProvider, err = imgUtil.GetPayloadImage(ctx, releaseProvider, hcluster, OpenStackCAPIProvider, pullSecretBytes)
+			capiImageProvider, err = metadataprovider.GetPayloadImage(ctx, releaseProvider, hcluster, OpenStackCAPIProvider, pullSecretBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to retrieve capi image: %w", err)
 			}

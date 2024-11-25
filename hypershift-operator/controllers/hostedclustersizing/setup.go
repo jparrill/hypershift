@@ -9,8 +9,8 @@ import (
 	schedulingv1alpha1 "github.com/openshift/hypershift/api/scheduling/v1alpha1"
 	hypershiftclient "github.com/openshift/hypershift/client/clientset/clientset"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	"github.com/openshift/hypershift/support/releaseinfo"
-	hyperutil "github.com/openshift/hypershift/support/util"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,7 +36,7 @@ const (
 	hostedClusterForNodePoolIndex = ".spec.clusterName"
 )
 
-func SetupWithManager(ctx context.Context, mgr ctrl.Manager, hypershiftOperatorImage string, releaseProvider *releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator, imageMetadataProvider *hyperutil.RegistryClientImageMetadataProvider) error {
+func SetupWithManager(ctx context.Context, mgr ctrl.Manager, hypershiftOperatorImage string, releaseProvider *releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator, imageMetadataProvider *metadataprovider.RegistryClientImageMetadataProvider) error {
 	hypershiftClient, err := hypershiftclient.NewForConfig(mgr.GetConfig())
 	if err != nil {
 		return err

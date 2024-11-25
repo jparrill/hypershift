@@ -39,6 +39,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	agentv1 "github.com/openshift/cluster-api-provider-agent/api/v1beta1"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	prometheusoperatorv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"gopkg.in/ini.v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -185,7 +186,7 @@ type HostedClusterReconciler struct {
 
 	OperatorNamespace string
 
-	ReconcileMetadataProviders func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error)
+	ReconcileMetadataProviders func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error)
 
 	overwriteReconcile   func(ctx context.Context, req ctrl.Request, log logr.Logger, hcluster *hyperv1.HostedCluster) (ctrl.Result, error)
 	now                  func() metav1.Time
@@ -356,7 +357,7 @@ func (r *HostedClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return res, err
 }
 
-func (r *HostedClusterReconciler) ReconcileMetadataProvidersImpl(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error) {
+func (r *HostedClusterReconciler) ReconcileMetadataProvidersImpl(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error) {
 	releaseProvider, imageMetadataProvider, err := globalconfig.RenconcileMgmtImageRegistryOverrides(ctx, r.ManagementClusterCapabilities, r.Client, imgOverrides)
 
 	return releaseProvider, imageMetadataProvider, err
@@ -2058,7 +2059,7 @@ func (r *HostedClusterReconciler) reconcileCAPIManager(ctx context.Context, crea
 	// Reconcile CAPI manager deployment
 	var capiImage string
 	if envImage := os.Getenv(images.CAPIEnvVar); len(envImage) > 0 {
-		version, err := hyperutil.GetPayloadVersion(ctx, *releaseProvider, hcluster, pullSecretBytes)
+		version, err := metadataprovider.GetPayloadVersion(ctx, *releaseProvider, hcluster, pullSecretBytes)
 		if err != nil {
 			return fmt.Errorf("failed to lookup payload version: %w", err)
 		}
@@ -2071,7 +2072,7 @@ func (r *HostedClusterReconciler) reconcileCAPIManager(ctx context.Context, crea
 		capiImage = hcluster.Annotations[hyperv1.ClusterAPIManagerImage]
 	}
 	if capiImage == "" {
-		if capiImage, err = hyperutil.GetPayloadImage(ctx, *releaseProvider, hcluster, ImageStreamCAPI, pullSecretBytes); err != nil {
+		if capiImage, err = metadataprovider.GetPayloadImage(ctx, *releaseProvider, hcluster, ImageStreamCAPI, pullSecretBytes); err != nil {
 			return fmt.Errorf("failed to retrieve capi image: %w", err)
 		}
 	}
@@ -2415,7 +2416,7 @@ func GetControlPlaneOperatorImage(ctx context.Context, hc *hyperv1.HostedCluster
 	if val, ok := hc.Annotations[hyperv1.ControlPlaneOperatorImageAnnotation]; ok {
 		return val, nil
 	}
-	releaseInfo, err := releaseProvider.Lookup(ctx, hyperutil.HCControlPlaneReleaseImage(hc), pullSecret)
+	releaseInfo, err := releaseProvider.Lookup(ctx, metadataprovider.HCControlPlaneReleaseImage(hc), pullSecret)
 	if err != nil {
 		return "", err
 	}
@@ -2447,7 +2448,7 @@ func GetControlPlaneOperatorImage(ctx context.Context, hc *hyperv1.HostedCluster
 //  1. The labels specified by the ControlPlaneOperatorImageLabelsAnnotation on the
 //     HostedCluster resource itself
 //  2. The image labels in the medata of the image as resolved by GetControlPlaneOperatorImage
-func GetControlPlaneOperatorImageLabels(ctx context.Context, hc *hyperv1.HostedCluster, controlPlaneOperatorImage string, pullSecret []byte, imageMetadataProvider hyperutil.ImageMetadataProvider) (map[string]string, error) {
+func GetControlPlaneOperatorImageLabels(ctx context.Context, hc *hyperv1.HostedCluster, controlPlaneOperatorImage string, pullSecret []byte, imageMetadataProvider metadataprovider.ImageMetadataProvider) (map[string]string, error) {
 	if val, ok := hc.Annotations[hyperv1.ControlPlaneOperatorImageLabelsAnnotation]; ok {
 		annotatedLabels := map[string]string{}
 		rawLabels := strings.Split(val, ",")
@@ -2466,7 +2467,7 @@ func GetControlPlaneOperatorImageLabels(ctx context.Context, hc *hyperv1.HostedC
 		return nil, fmt.Errorf("failed to look up image metadata for %s: %w", controlPlaneOperatorImage, err)
 	}
 
-	return hyperutil.ImageLabels(controlPlaneOperatorImageMetadata), nil
+	return metadataprovider.ImageLabels(controlPlaneOperatorImageMetadata), nil
 }
 
 func reconcileControlPlaneOperatorDeployment(
@@ -2567,7 +2568,7 @@ func reconcileControlPlaneOperatorDeployment(
 							},
 							{
 								Name:  "OPERATE_ON_RELEASE_IMAGE",
-								Value: hyperutil.HCControlPlaneReleaseImage(hc),
+								Value: metadataprovider.HCControlPlaneReleaseImage(hc),
 							},
 							{
 								Name:  "OPENSHIFT_IMG_OVERRIDES",
@@ -3544,7 +3545,7 @@ func computeClusterVersionStatus(clock clock.WithTickerAndDelayedExecution, hclu
 	// It is also used before the HostedControlPlane is created to bootstrap
 	// the ClusterVersionStatus.
 
-	releaseImage := hyperutil.HCControlPlaneReleaseImage(hcluster)
+	releaseImage := metadataprovider.HCControlPlaneReleaseImage(hcluster)
 
 	// If there's no history, rebuild it from scratch.
 	if hcluster.Status.Version == nil || len(hcluster.Status.Version.History) == 0 {
@@ -4063,7 +4064,7 @@ func (r *HostedClusterReconciler) reconcileClusterPrometheusRBAC(ctx context.Con
 }
 
 func (r *HostedClusterReconciler) reconcileMachineApprover(ctx context.Context, createOrUpdate upsert.CreateOrUpdateFN, hcluster *hyperv1.HostedCluster, hcp *hyperv1.HostedControlPlane, utilitiesImage string, pullSecretBytes []byte, releaseVersion semver.Version, releaseProvider releaseinfo.ProviderWithOpenShiftImageRegistryOverrides) error {
-	machineApproverImage, err := hyperutil.GetPayloadImage(ctx, releaseProvider, hcluster, ImageStreamClusterMachineApproverImage, pullSecretBytes)
+	machineApproverImage, err := metadataprovider.GetPayloadImage(ctx, releaseProvider, hcluster, ImageStreamClusterMachineApproverImage, pullSecretBytes)
 	if err != nil {
 		return fmt.Errorf("failed to get image for machine approver: %w", err)
 	}
@@ -4189,7 +4190,7 @@ func (r *HostedClusterReconciler) validateReleaseImage(ctx context.Context, hc *
 	}
 
 	var currentVersion *semver.Version
-	if hc.Status.Version != nil && hc.Status.Version.Desired.Image != hyperutil.HCControlPlaneReleaseImage(hc) {
+	if hc.Status.Version != nil && hc.Status.Version.Desired.Image != metadataprovider.HCControlPlaneReleaseImage(hc) {
 		releaseInfo, err := releaseProvider.Lookup(ctx, hc.Status.Version.Desired.Image, pullSecretBytes)
 		if err != nil {
 			return fmt.Errorf("failed to lookup release image: %w", err)
@@ -4848,7 +4849,7 @@ func (r *HostedClusterReconciler) lookupReleaseImage(ctx context.Context, hclust
 	if err != nil {
 		return nil, err
 	}
-	return releaseProvider.Lookup(ctx, hyperutil.HCControlPlaneReleaseImage(hcluster), pullSecretBytes)
+	return releaseProvider.Lookup(ctx, metadataprovider.HCControlPlaneReleaseImage(hcluster), pullSecretBytes)
 }
 
 func (r *HostedClusterReconciler) isAutoscalingNeeded(ctx context.Context, hcluster *hyperv1.HostedCluster) (bool, error) {
@@ -4912,7 +4913,7 @@ func (r *HostedClusterReconciler) syncKVLiveMigratableCondition(ctx context.Cont
 // 2) non-error message about the condition of the upgrade
 // 3) error indicating that the upgrade is not allowed or we were not able to determine
 func isUpgrading(hcluster *hyperv1.HostedCluster, releaseImage *releaseinfo.ReleaseImage) (bool, string, error) {
-	if hcluster.Status.Version == nil || hcluster.Status.Version.Desired.Image == hyperutil.HCControlPlaneReleaseImage(hcluster) {
+	if hcluster.Status.Version == nil || hcluster.Status.Version.Desired.Image == metadataprovider.HCControlPlaneReleaseImage(hcluster) {
 		// cluster is either installing or at the version requested by the spec, no upgrade in progress
 		return false, "", nil
 	}
@@ -4925,7 +4926,7 @@ func isUpgrading(hcluster *hyperv1.HostedCluster, releaseImage *releaseinfo.Rele
 	// Check if the upgrade is being forced
 	upgradeImage, exists := hcluster.Annotations[hyperv1.ForceUpgradeToAnnotation]
 	if exists {
-		if upgradeImage != hyperutil.HCControlPlaneReleaseImage(hcluster) {
+		if upgradeImage != metadataprovider.HCControlPlaneReleaseImage(hcluster) {
 			return true, "", fmt.Errorf("force upgrade annotation is present but does not match desired release image")
 		} else {
 			return true, "upgrade is forced by annotation", nil

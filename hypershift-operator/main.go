@@ -48,6 +48,7 @@ import (
 	"github.com/openshift/hypershift/support/capabilities"
 	"github.com/openshift/hypershift/support/config"
 	"github.com/openshift/hypershift/support/globalconfig"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	"github.com/openshift/hypershift/support/metrics"
 	"github.com/openshift/hypershift/support/releaseinfo"
 	"github.com/openshift/hypershift/support/upsert"
@@ -307,7 +308,7 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		OpenShiftImageRegistryOverrides: imageRegistryOverrides,
 	}
 
-	imageMetaDataProvider := &hyperutil.RegistryClientImageMetadataProvider{
+	imageMetaDataProvider := &metadataprovider.RegistryClientImageMetadataProvider{
 		OpenShiftImageRegistryOverrides: imageRegistryOverrides,
 	}
 
@@ -380,7 +381,7 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		ReleaseProvider:         releaseProviderWithOpenShiftImageRegistryOverrides,
 		CreateOrUpdateProvider:  createOrUpdate,
 		HypershiftOperatorImage: operatorImage,
-		ImageMetadataProvider: &hyperutil.RegistryClientImageMetadataProvider{
+		ImageMetadataProvider: &metadataprovider.RegistryClientImageMetadataProvider{
 			OpenShiftImageRegistryOverrides: imageRegistryOverrides,
 		},
 		KubevirtInfraClients: kvinfra.NewKubevirtInfraClientMap(),

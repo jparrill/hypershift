@@ -1,4 +1,4 @@
-package util
+package imagemetadataprovider
 
 import (
 	"context"
@@ -24,10 +24,12 @@ import (
 
 var (
 	imageMetadataCache = lru.New(1000)
+	manifestsCache     = lru.New(1000)
 )
 
 type ImageMetadataProvider interface {
 	ImageMetadata(ctx context.Context, imageRef string, pullSecret []byte) (*dockerv1client.DockerImageConfig, error)
+	GetManifest(ctx context.Context, imageRef string, pullSecret []byte) (distribution.Manifest, error)
 }
 
 type RegistryClientImageMetadataProvider struct {
@@ -75,7 +77,7 @@ func (r *RegistryClientImageMetadataProvider) ImageMetadata(ctx context.Context,
 		}
 
 		ref = &parsedImageRef
-		repo, err = getRepository(ctx, *ref, pullSecret)
+		repo, err = GetRepository(ctx, *ref, pullSecret)
 		if err != nil {
 			return nil, err
 		}
@@ -104,7 +106,7 @@ func (r *RegistryClientImageMetadataProvider) ImageMetadata(ctx context.Context,
 		}
 	}
 
-	repo, err = getRepository(ctx, *ref, pullSecret)
+	repo, err = GetRepository(ctx, *ref, pullSecret)
 	if err != nil || repo == nil {
 		return nil, fmt.Errorf("failed to create repository client for %s: %w", ref.DockerClientDefaults().RegistryURL(), err)
 	}
@@ -131,7 +133,98 @@ func (r *RegistryClientImageMetadataProvider) ImageMetadata(ctx context.Context,
 	return config, nil
 }
 
-func getRepository(ctx context.Context, ref reference.DockerImageReference, pullSecret []byte) (distribution.Repository, error) {
+// GetManifest returns the manifest for a given image using the given pull secret
+// to authenticate. This lookup uses a cache based on the image digest. If The
+// reference of the image contains a digest (which is the mainline case for images in a release payload),
+// the digest is parsed from the image reference and then used to lookup the manifest in the
+// cache and return it with the ImageOverrides already included.
+func (r *RegistryClientImageMetadataProvider) GetManifest(ctx context.Context, imageRef string, pullSecret []byte) (distribution.Manifest, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	var (
+		repo           distribution.Repository
+		ref            *reference.DockerImageReference
+		parsedImageRef reference.DockerImageReference
+		err            error
+		overrideFound  bool
+	)
+
+	fmt.Println("GET MANIFEST - ImageRef", imageRef)
+
+	parsedImageRef, err = reference.Parse(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse image reference %q: %w", imageRef, err)
+	}
+	fmt.Println("GET MANIFEST - parsedImageRef", parsedImageRef)
+
+	// There are no ICSPs/IDMSs to process.
+	// That means the image reference should be pulled from the external registry
+	if len(r.OpenShiftImageRegistryOverrides) == 0 {
+		parsedImageRef, err = reference.Parse(imageRef)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse image reference %q: %w", imageRef, err)
+		}
+
+		// If the image reference contains a digest, immediately look it up in the cache
+		if parsedImageRef.ID != "" {
+			if manifest, exists := manifestsCache.Get(parsedImageRef.ID); exists {
+				return manifest.(distribution.Manifest), nil
+			}
+		}
+
+		ref = &parsedImageRef
+		repo, err = GetRepository(ctx, *ref, pullSecret)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Get the image repo info based the source/mirrors in the ICSPs/IDMSs
+	for source, mirrors := range r.OpenShiftImageRegistryOverrides {
+		for _, mirror := range mirrors {
+			ref, overrideFound, err = GetRegistryOverrides(ctx, parsedImageRef, source, mirror)
+			if err != nil {
+				log.Info(fmt.Sprintf("failed to find registry override for image reference %q with source, %s, mirror %s: %s", imageRef, source, mirror, err.Error()))
+				continue
+			}
+			break
+		}
+		// We found a successful source/mirror combo so break continuing any further source/mirror combos
+		if overrideFound {
+			break
+		}
+	}
+
+	// If the image reference contains a digest, immediately look it up in the cache
+	if ref.ID != "" {
+		if manifest, exists := manifestsCache.Get(ref.ID); exists {
+			return manifest.(distribution.Manifest), nil
+		}
+	}
+
+	repo, err = GetRepository(ctx, *ref, pullSecret)
+	if err != nil || repo == nil {
+		return nil, fmt.Errorf("failed to create repository client for %s: %w", ref.DockerClientDefaults().RegistryURL(), err)
+	}
+
+	ref.ID = parsedImageRef.ID
+	firstManifest, location, err := manifest.FirstManifest(ctx, *ref, repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to obtain root manifest for %s: %w", imageRef, err)
+	}
+
+	if ref.ID == "" {
+		if manifest, exists := manifestsCache.Get(string(location.Manifest)); exists {
+			return manifest.(distribution.Manifest), nil
+		}
+	}
+
+	manifestsCache.Add(string(location.Manifest), firstManifest)
+
+	return firstManifest, nil
+}
+
+func GetRepository(ctx context.Context, ref reference.DockerImageReference, pullSecret []byte) (distribution.Repository, error) {
 	credStore, err := dockercredentials.NewFromBytes(pullSecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse docker credentials: %w", err)
@@ -170,12 +263,27 @@ func GetRegistryOverrides(ctx context.Context, ref reference.DockerImageReferenc
 		return nil, false, fmt.Errorf("failed to parse source image reference %q: %w", source, err)
 	}
 
-	if sourceRef.Namespace == ref.Namespace && sourceRef.Name == ref.Name {
-		log.Info("registry override coincidence found", "original", fmt.Sprintf("%s/%s/%s", ref.Registry, ref.Namespace, ref.Name), "mirror", mirror)
-		mirrorRef, err := reference.Parse(mirror)
-		if err != nil {
-			return nil, false, fmt.Errorf("failed to parse mirror image reference %q: %w", mirrorRef.Name, err)
+	mirrorRef, err := reference.Parse(mirror)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to parse mirror image reference %q: %w", source, err)
+	}
+
+	// docker lib, by default will empty the Namespace once we pass an override with just a Namespace
+	// and it will asume that is the Name instead
+	if sourceRef.Namespace == "" {
+		if sourceRef.Name == ref.Namespace {
+			composedImage := fmt.Sprintf("%s/%s/%s", mirrorRef.Registry, ref.Namespace, ref.NameString())
+			composedRef, err := reference.Parse(composedImage)
+			if err != nil {
+				return nil, false, fmt.Errorf("failed to parse composed image reference %q: %w", source, err)
+			}
+			log.Info("registry override coincidence found (namespace)", "original", fmt.Sprintf("%s/%s/%s", ref.Registry, ref.Namespace, ref.NameString()), "mirror", mirror, "composed", composedRef)
+			return &composedRef, true, nil
 		}
+	}
+
+	if ref.Namespace == sourceRef.Namespace && ref.Name == sourceRef.Name {
+		log.Info("registry override coincidence found (exact match)", "original", fmt.Sprintf("%s/%s/%s", ref.Registry, ref.Namespace, ref.NameString()), "mirror", mirror)
 		return &mirrorRef, true, nil
 	}
 

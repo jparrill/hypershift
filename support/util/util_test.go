@@ -9,6 +9,7 @@ import (
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/support/api"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apiversion "k8s.io/apimachinery/pkg/version"
@@ -609,7 +610,7 @@ func TestGetImageArchitecture(t *testing.T) {
 		name                  string
 		image                 string
 		pullSecretBytes       []byte
-		imageMetadataProvider *RegistryClientImageMetadataProvider
+		imageMetadataProvider *metadataprovider.RegistryClientImageMetadataProvider
 		expectedArch          hyperv1.PayloadArchType
 		expectErr             bool
 	}{
@@ -617,7 +618,7 @@ func TestGetImageArchitecture(t *testing.T) {
 			name:                  "Get amd64 from amd64 image; no err",
 			image:                 "quay.io/openshift-release-dev/ocp-release:4.16.10-x86_64",
 			pullSecretBytes:       pullSecretBytes,
-			imageMetadataProvider: &RegistryClientImageMetadataProvider{},
+			imageMetadataProvider: &metadataprovider.RegistryClientImageMetadataProvider{},
 			expectedArch:          hyperv1.AMD64,
 			expectErr:             false,
 		},
@@ -625,7 +626,7 @@ func TestGetImageArchitecture(t *testing.T) {
 			name:                  "Get ppc64le from ppc64le image; no err",
 			image:                 "quay.io/openshift-release-dev/ocp-release:4.16.11-ppc64le",
 			pullSecretBytes:       pullSecretBytes,
-			imageMetadataProvider: &RegistryClientImageMetadataProvider{},
+			imageMetadataProvider: &metadataprovider.RegistryClientImageMetadataProvider{},
 			expectedArch:          hyperv1.PPC64LE,
 			expectErr:             false,
 		},
@@ -633,7 +634,7 @@ func TestGetImageArchitecture(t *testing.T) {
 			name:                  "Bad pull secret; err",
 			image:                 "quay.io/openshift-release-dev/ocp-release:4.16.11-ppc64le",
 			pullSecretBytes:       []byte(""),
-			imageMetadataProvider: &RegistryClientImageMetadataProvider{},
+			imageMetadataProvider: &metadataprovider.RegistryClientImageMetadataProvider{},
 			expectedArch:          "",
 			expectErr:             true,
 		},
@@ -660,7 +661,7 @@ func TestDetermineHostedClusterPayloadArch(t *testing.T) {
 		name                  string
 		hc                    *hyperv1.HostedCluster
 		secret                *corev1.Secret
-		imageMetadataProvider *RegistryClientImageMetadataProvider
+		imageMetadataProvider *metadataprovider.RegistryClientImageMetadataProvider
 		expectedPayloadType   hyperv1.PayloadArchType
 		expectErr             bool
 	}{
@@ -688,7 +689,7 @@ func TestDetermineHostedClusterPayloadArch(t *testing.T) {
 					corev1.DockerConfigJsonKey: pullSecretBytes,
 				},
 			},
-			imageMetadataProvider: &RegistryClientImageMetadataProvider{},
+			imageMetadataProvider: &metadataprovider.RegistryClientImageMetadataProvider{},
 			expectedPayloadType:   hyperv1.AMD64,
 			expectErr:             false,
 		},
@@ -716,7 +717,7 @@ func TestDetermineHostedClusterPayloadArch(t *testing.T) {
 					corev1.DockerConfigJsonKey: pullSecretBytes,
 				},
 			},
-			imageMetadataProvider: &RegistryClientImageMetadataProvider{},
+			imageMetadataProvider: &metadataprovider.RegistryClientImageMetadataProvider{},
 			expectedPayloadType:   hyperv1.Multi,
 			expectErr:             false,
 		},

@@ -8,8 +8,8 @@ import (
 	"github.com/go-logr/logr"
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/cmd/cluster/core"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	"github.com/openshift/hypershift/support/supportedversion"
-	hyperutil "github.com/openshift/hypershift/support/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -118,7 +118,7 @@ func (defaulter *nodePoolDefaulter) Default(ctx context.Context, obj runtime.Obj
 }
 
 // SetupWebhookWithManager sets up HostedCluster webhooks.
-func SetupWebhookWithManager(mgr ctrl.Manager, imageMetaDataProvider *hyperutil.RegistryClientImageMetadataProvider, logger logr.Logger) error {
+func SetupWebhookWithManager(mgr ctrl.Manager, imageMetaDataProvider *metadataprovider.RegistryClientImageMetadataProvider, logger logr.Logger) error {
 	err := ctrl.NewWebhookManagedBy(mgr).
 		For(&hyperv1.HostedCluster{}).
 		WithDefaulter(&hostedClusterDefaulter{}).

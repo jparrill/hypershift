@@ -11,7 +11,7 @@ import (
 	"github.com/openshift/hypershift/support/capabilities"
 	"github.com/openshift/hypershift/support/releaseinfo"
 
-	hyperutil "github.com/openshift/hypershift/support/util"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -173,7 +173,7 @@ func getImageContentSourcePolicies(ctx context.Context, client client.Client) (m
 	return icspRegistryOverrides, nil
 }
 
-func RenconcileMgmtImageRegistryOverrides(ctx context.Context, capChecker capabilities.CapabiltyChecker, client crclient.Client, registryOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error) {
+func RenconcileMgmtImageRegistryOverrides(ctx context.Context, capChecker capabilities.CapabiltyChecker, client crclient.Client, registryOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error) {
 	var (
 		imageRegistryMirrors map[string][]string
 		err                  error
@@ -197,7 +197,7 @@ func RenconcileMgmtImageRegistryOverrides(ctx context.Context, capChecker capabi
 		OpenShiftImageRegistryOverrides: imageRegistryMirrors,
 	}
 
-	imageMetadataProvider := &hyperutil.RegistryClientImageMetadataProvider{
+	imageMetadataProvider := &metadataprovider.RegistryClientImageMetadataProvider{
 		OpenShiftImageRegistryOverrides: imageRegistryMirrors,
 	}
 

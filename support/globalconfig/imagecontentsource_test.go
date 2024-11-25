@@ -8,8 +8,8 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/hypershift/support/api"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	"github.com/openshift/hypershift/support/releaseinfo"
-	hyperutil "github.com/openshift/hypershift/support/util"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	. "github.com/onsi/gomega"
@@ -190,7 +190,7 @@ func TestReconcileMgmtImageRegistryOverrides(t *testing.T) {
 		idms               *configv1.ImageDigestMirrorSetList
 		icsp               *operatorv1alpha1.ImageContentSourcePolicyList
 		expectedRelease    *releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator
-		expectedMetadata   *hyperutil.RegistryClientImageMetadataProvider
+		expectedMetadata   *metadataprovider.RegistryClientImageMetadataProvider
 		expectedError      error
 		expectedErrorMatch string
 	}{
@@ -237,7 +237,7 @@ func TestReconcileMgmtImageRegistryOverrides(t *testing.T) {
 					},
 				},
 			},
-			expectedMetadata: &hyperutil.RegistryClientImageMetadataProvider{
+			expectedMetadata: &metadataprovider.RegistryClientImageMetadataProvider{
 				OpenShiftImageRegistryOverrides: map[string][]string{
 					"registry1": {"mirror1", "mirror2"},
 					"registry2": {"mirror1", "mirror2"},
@@ -283,7 +283,7 @@ func TestReconcileMgmtImageRegistryOverrides(t *testing.T) {
 				},
 				OpenShiftImageRegistryOverrides: nil,
 			},
-			expectedMetadata: &hyperutil.RegistryClientImageMetadataProvider{
+			expectedMetadata: &metadataprovider.RegistryClientImageMetadataProvider{
 				OpenShiftImageRegistryOverrides: nil,
 			},
 			expectedError: nil,

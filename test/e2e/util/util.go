@@ -26,8 +26,8 @@ import (
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests"
 	"github.com/openshift/hypershift/support/conditions"
 	suppconfig "github.com/openshift/hypershift/support/config"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	"github.com/openshift/hypershift/support/util"
-	hyperutil "github.com/openshift/hypershift/support/util"
 	"github.com/openshift/library-go/test/library/metrics"
 	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -1957,7 +1957,7 @@ func EnsurePayloadArchSetCorrectly(t *testing.T, ctx context.Context, client crc
 			},
 			[]Predicate[*hyperv1.HostedCluster]{
 				func(cluster *hyperv1.HostedCluster) (done bool, reasons string, err error) {
-					imageMetadataProvider := &hyperutil.RegistryClientImageMetadataProvider{}
+					imageMetadataProvider := &metadataprovider.RegistryClientImageMetadataProvider{}
 					payloadArch, err := util.DetermineHostedClusterPayloadArch(ctx, client, cluster, imageMetadataProvider)
 					if err != nil {
 						return false, "failed to get hc payload arch", err

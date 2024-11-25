@@ -28,12 +28,12 @@ import (
 	"github.com/openshift/hypershift/support/capabilities"
 	fakecapabilities "github.com/openshift/hypershift/support/capabilities/fake"
 	"github.com/openshift/hypershift/support/config"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
+	fakeimagemetadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider/fake"
 	"github.com/openshift/hypershift/support/releaseinfo"
 	fakereleaseprovider "github.com/openshift/hypershift/support/releaseinfo/fake"
 	"github.com/openshift/hypershift/support/thirdparty/library-go/pkg/image/dockerv1client"
 	"github.com/openshift/hypershift/support/upsert"
-	hyperutil "github.com/openshift/hypershift/support/util"
-	"github.com/openshift/hypershift/support/util/fakeimagemetadataprovider"
 	"go.uber.org/zap/zapcore"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -154,7 +154,7 @@ func TestHasBeenAvailable(t *testing.T) {
 				CertRotationScale:             24 * time.Hour,
 				createOrUpdate:                func(reconcile.Request) upsert.CreateOrUpdateFN { return ctrl.CreateOrUpdate },
 				ManagementClusterCapabilities: &fakecapabilities.FakeSupportNoCapabilities{},
-				ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error) {
+				ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error) {
 					return &fakereleaseprovider.FakeReleaseProvider{}, &fakeimagemetadataprovider.FakeImageMetadataProvider{Result: &dockerv1client.DockerImageConfig{}}, nil
 				},
 				now: func() metav1.Time { return reconcilerNow },
@@ -1082,7 +1082,7 @@ func TestHostedClusterWatchesEverythingItCreates(t *testing.T) {
 			capabilities.CapabilityProxy,
 		),
 		createOrUpdate: func(reconcile.Request) upsert.CreateOrUpdateFN { return ctrl.CreateOrUpdate },
-		ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error) {
+		ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error) {
 			return &fakereleaseprovider.FakeReleaseProvider{}, &fakeimagemetadataprovider.FakeImageMetadataProvider{Result: &dockerv1client.DockerImageConfig{}}, nil
 		},
 		EnableEtcdRecovery: true,
@@ -1894,7 +1894,7 @@ func TestValidateReleaseImage(t *testing.T) {
 			r := &HostedClusterReconciler{
 				CertRotationScale: 24 * time.Hour,
 				Client:            fake.NewClientBuilder().WithObjects(tc.other...).Build(),
-				ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error) {
+				ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error) {
 					return &fakereleaseprovider.FakeReleaseProvider{
 							ImageVersion: map[string]string{
 								"image-4.7.0":  "4.7.0",
@@ -2244,7 +2244,7 @@ func TestIsUpgradeable(t *testing.T) {
 		r := &HostedClusterReconciler{
 			CertRotationScale: 24 * time.Hour,
 			Client:            fake.NewClientBuilder().WithObjects(objs...).Build(),
-			ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error) {
+			ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error) {
 				return &fakereleaseprovider.FakeReleaseProvider{
 						ImageVersion: map[string]string{
 							"image-4.13":   "4.13.0",
@@ -2602,7 +2602,7 @@ func TestIsProgressing(t *testing.T) {
 		r := &HostedClusterReconciler{
 			CertRotationScale: 24 * time.Hour,
 			Client:            fake.NewClientBuilder().WithObjects(objs...).Build(),
-			ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error) {
+			ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error) {
 				return &fakereleaseprovider.FakeReleaseProvider{
 						ImageVersion: map[string]string{
 							"release-1.2": "1.2.0",
@@ -3534,7 +3534,7 @@ func TestKubevirtETCDEncKey(t *testing.T) {
 					capabilities.CapabilityProxy,
 				),
 				createOrUpdate: func(reconcile.Request) upsert.CreateOrUpdateFN { return ctrl.CreateOrUpdate },
-				ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, hyperutil.ImageMetadataProvider, error) {
+				ReconcileMetadataProviders: func(ctx context.Context, imgOverrides map[string]string) (releaseinfo.ProviderWithOpenShiftImageRegistryOverrides, metadataprovider.ImageMetadataProvider, error) {
 					return &fakereleaseprovider.FakeReleaseProvider{}, &fakeimagemetadataprovider.FakeImageMetadataProvider{Result: &dockerv1client.DockerImageConfig{}}, nil
 				},
 				now: metav1.Now,

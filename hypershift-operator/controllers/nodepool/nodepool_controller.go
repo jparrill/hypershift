@@ -16,6 +16,7 @@ import (
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/nodepool/kubevirt"
 	kvinfra "github.com/openshift/hypershift/kubevirtexternalinfra"
+	metadataprovider "github.com/openshift/hypershift/support/imagemetadataprovider"
 	"github.com/openshift/hypershift/support/releaseinfo"
 	"github.com/openshift/hypershift/support/supportedversion"
 	"github.com/openshift/hypershift/support/upsert"
@@ -85,7 +86,7 @@ type NodePoolReconciler struct {
 	ReleaseProvider releaseinfo.Provider
 	upsert.CreateOrUpdateProvider
 	HypershiftOperatorImage string
-	ImageMetadataProvider   supportutil.ImageMetadataProvider
+	ImageMetadataProvider   metadataprovider.ImageMetadataProvider
 	KubevirtInfraClients    kvinfra.KubevirtInfraClientMap
 }
 
@@ -887,7 +888,7 @@ func (r *NodePoolReconciler) detectCPOCapabilities(ctx context.Context, hostedCl
 		return nil, fmt.Errorf("failed to look up image metadata for %s: %w", controlPlaneOperatorImage, err)
 	}
 
-	imageLabels := supportutil.ImageLabels(controlPlaneOperatorImageMetadata)
+	imageLabels := metadataprovider.ImageLabels(controlPlaneOperatorImageMetadata)
 	result := &CPOCapabilities{}
 	_, result.DecompressAndDecodeConfig = imageLabels[controlPlaneOperatorManagesDecompressAndDecodeConfig]
 	_, result.CreateDefaultAWSSecurityGroup = imageLabels[controlPlaneOperatorCreatesDefaultAWSSecurityGroup]
