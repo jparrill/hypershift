@@ -726,7 +726,8 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		meta.SetStatusCondition(&hostedControlPlane.Status.Conditions, condition)
 	}
 
-	kubeconfig := manifests.KASExternalKubeconfigSecret(hostedControlPlane.Namespace, hostedControlPlane.Spec.KubeConfig)
+	// Admin Kubeconfig
+	kubeconfig := manifests.KASAdminKubeconfigSecret(hostedControlPlane.Namespace, hostedControlPlane.Spec.KubeConfig)
 	if err := r.Get(ctx, client.ObjectKeyFromObject(kubeconfig), kubeconfig); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return reconcile.Result{}, err
@@ -736,9 +737,49 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			Name: kubeconfig.Name,
 			Key:  DefaultAdminKubeconfigKey,
 		}
+
 		if hostedControlPlane.Spec.KubeConfig != nil {
 			hostedControlPlane.Status.KubeConfig.Key = hostedControlPlane.Spec.KubeConfig.Key
 		}
+	}
+
+	if hostedControlPlane.Spec.KasCustomKubeconfig != nil && len(hostedControlPlane.Spec.KasCustomKubeconfig.KasDNSName) > 0 {
+		// Reconcile custom kubeconfig status and secret
+		customKubeconfig := manifests.KASCustomKubeconfigSecret(hostedControlPlane.Namespace, hostedControlPlane.Spec.KasCustomKubeconfig.SecretRef)
+		if err := r.Get(ctx, client.ObjectKeyFromObject(customKubeconfig), customKubeconfig); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return reconcile.Result{}, err
+			}
+		} else {
+			hostedControlPlane.Status.CustomKubeConfig = &hyperv1.KubeconfigSecretRef{
+				Name: customKubeconfig.Name,
+				Key:  DefaultAdminKubeconfigKey,
+			}
+
+			if hostedControlPlane.Spec.KasCustomKubeconfig.SecretRef != nil {
+				hostedControlPlane.Status.CustomKubeConfig.Key = hostedControlPlane.Spec.KasCustomKubeconfig.SecretRef.Key
+			}
+		}
+	} else {
+		// Cleanning up custom kubeconfig status and secret if the external name is removed
+		var KubeAPICustomKubeconfigSecret *hyperv1.KubeconfigSecretRef
+
+		if hostedControlPlane.Spec.KasCustomKubeconfig != nil {
+			KubeAPICustomKubeconfigSecret = hostedControlPlane.Spec.KasCustomKubeconfig.SecretRef
+		}
+
+		customKubeconfig := manifests.KASCustomKubeconfigSecret(hostedControlPlane.Namespace, KubeAPICustomKubeconfigSecret)
+		if err := r.Get(ctx, client.ObjectKeyFromObject(customKubeconfig), customKubeconfig); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return reconcile.Result{}, err
+			}
+		}
+
+		if _, err := util.DeleteIfNeeded(ctx, r.Client, customKubeconfig); err != nil {
+			return reconcile.Result{}, err
+		}
+		hostedControlPlane.Status.CustomKubeConfig = nil
+
 	}
 
 	explicitOauthConfig := hostedControlPlane.Spec.Configuration != nil && hostedControlPlane.Spec.Configuration.OAuth != nil
@@ -2975,12 +3016,29 @@ func (r *HostedControlPlaneReconciler) reconcileKubeAPIServer(ctx context.Contex
 		return fmt.Errorf("failed to reconcile localhost kubeconfig secret: %w", err)
 	}
 
-	externalKubeconfigSecret := manifests.KASExternalKubeconfigSecret(hcp.Namespace, hcp.Spec.KubeConfig)
-	if _, err := createOrUpdate(ctx, r, externalKubeconfigSecret, func() error {
-		if !util.IsPublicHCP(hcp) && !util.IsRouteKAS(hcp) {
-			return kas.ReconcileExternalKubeconfigSecret(externalKubeconfigSecret, clientCertSecret, rootCA, p.OwnerRef, p.InternalURL(), p.ExternalKubeconfigKey())
+	// Generate the new externalKubeconfigSecret if the external name is set
+	if len(hcp.Spec.KasCustomKubeconfig.KasDNSName) > 0 {
+		if hcp.Spec.Configuration != nil && hcp.Spec.Configuration.APIServer != nil && len(hcp.Spec.Configuration.APIServer.ClientCA.Name) > 0 {
+			rootCA = manifests.KASExternalCAConfigMap(hcp.Spec.Configuration.APIServer.ClientCA.Name)
+			if err := r.Get(ctx, client.ObjectKeyFromObject(rootCA), rootCA); err != nil {
+				return fmt.Errorf("failed to get root ca cert secret: %w", err)
+			}
 		}
-		return kas.ReconcileExternalKubeconfigSecret(externalKubeconfigSecret, clientCertSecret, rootCA, p.OwnerRef, p.ExternalURL(), p.ExternalKubeconfigKey())
+		customExternalKubeconfigSecret := manifests.KASCustomKubeconfigSecret(hcp.Namespace, hcp.Spec.KasCustomKubeconfig.SecretRef)
+		if _, err := createOrUpdate(ctx, r, customExternalKubeconfigSecret, func() error {
+			return kas.ReconcileExternalKubeconfigSecret(customExternalKubeconfigSecret, clientCertSecret, rootCA, p.OwnerRef, p.CustomExternalURL(), p.CustomExternalKubeconfigKey())
+		}); err != nil {
+			return fmt.Errorf("failed to reconcile custom external kubeconfig secret: %w", err)
+		}
+	}
+
+	// Renamed the old externalKubeconfigSecret to adminKubeconfigSecret
+	adminKubeconfigSecret := manifests.KASAdminKubeconfigSecret(hcp.Namespace, hcp.Spec.KubeConfig)
+	if _, err := createOrUpdate(ctx, r, adminKubeconfigSecret, func() error {
+		if !util.IsPublicHCP(hcp) && !util.IsRouteKAS(hcp) {
+			return kas.ReconcileExternalKubeconfigSecret(adminKubeconfigSecret, clientCertSecret, rootCA, p.OwnerRef, p.InternalURL(), p.ExternalKubeconfigKey())
+		}
+		return kas.ReconcileExternalKubeconfigSecret(adminKubeconfigSecret, clientCertSecret, rootCA, p.OwnerRef, p.ExternalURL(), p.ExternalKubeconfigKey())
 	}); err != nil {
 		return fmt.Errorf("failed to reconcile external kubeconfig secret: %w", err)
 	}
@@ -5661,7 +5719,7 @@ func (r *HostedControlPlaneReconciler) validateAzureKMSConfig(ctx context.Contex
 }
 
 func (r *HostedControlPlaneReconciler) GetGuestClusterClient(ctx context.Context, hcp *hyperv1.HostedControlPlane) (*kubernetes.Clientset, error) {
-	kubeconfigSecret := manifests.KASExternalKubeconfigSecret(hcp.Namespace, hcp.Spec.KubeConfig)
+	kubeconfigSecret := manifests.KASCustomKubeconfigSecret(hcp.Namespace, hcp.Spec.KubeConfig)
 	if err := r.Get(ctx, client.ObjectKeyFromObject(kubeconfigSecret), kubeconfigSecret); err != nil {
 		return nil, err
 	}

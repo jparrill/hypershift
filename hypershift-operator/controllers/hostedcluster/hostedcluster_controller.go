@@ -605,6 +605,20 @@ func (r *HostedClusterReconciler) reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
+	{
+		if len(hcluster.Spec.KasDNSName) > 0 {
+			CustomKubeConfigSecret := manifests.KubeConfigExternalSecret(hcluster.Namespace, hcluster.Name)
+			err := r.Client.Get(ctx, client.ObjectKeyFromObject(CustomKubeConfigSecret), CustomKubeConfigSecret)
+			if err != nil {
+				if !apierrors.IsNotFound(err) {
+					return ctrl.Result{}, fmt.Errorf("failed to reconcile external kubeconfig secret: %w", err)
+				}
+			} else {
+				hcluster.Status.CustomKubeConfig = &corev1.LocalObjectReference{Name: CustomKubeConfigSecret.Name}
+			}
+		}
+	}
+
 	// Reconcile the ICSP/IDMS from the management cluster
 	releaseProvider, registryClientImageMetadataProvider, err := r.ReconcileMetadataProviders(ctx, r.RegistryOverrides)
 	if err != nil {
@@ -1663,6 +1677,60 @@ func (r *HostedClusterReconciler) reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
+	// Reconcile the HostedControlPlane external kubeconfig if one is reported
+	if len(hcp.Spec.KasCustomKubeconfig.KasDNSName) > 0 {
+		if hcp.Status.CustomKubeConfig != nil {
+			src := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: hcp.Namespace,
+					Name:      hcp.Status.CustomKubeConfig.Name,
+				},
+			}
+			err := r.Client.Get(ctx, client.ObjectKeyFromObject(src), src)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to get controlplane custom external kubeconfig secret %q: %w", client.ObjectKeyFromObject(src), err)
+			}
+			dest := manifests.KubeConfigExternalSecret(hcluster.Namespace, hcluster.Name)
+			_, err = createOrUpdate(ctx, r.Client, dest, func() error {
+				key := hcp.Status.CustomKubeConfig.Key
+				srcData, srcHasData := src.Data[key]
+				if !srcHasData {
+					return fmt.Errorf("controlplane custom external kubeconfig secret %q must have a %q key", client.ObjectKeyFromObject(src), key)
+				}
+				dest.Labels = hcluster.Labels
+				dest.Type = corev1.SecretTypeOpaque
+				if dest.Data == nil {
+					dest.Data = map[string][]byte{}
+				}
+				dest.Data["kubeconfig"] = srcData
+				dest.SetOwnerReferences([]metav1.OwnerReference{{
+					APIVersion: hyperv1.GroupVersion.String(),
+					Kind:       "HostedCluster",
+					Name:       hcluster.Name,
+					UID:        hcluster.UID,
+				}})
+				return nil
+			})
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to reconcile hostedcluster custom external kubeconfig secret: %w", err)
+			}
+		}
+	} else {
+		// Delete the custom external kubeconfig secret if it exists and the external name is not set
+		if hcluster.Status.CustomKubeConfig != nil {
+			customKubeconfig := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: hcluster.Namespace,
+					Name:      hcluster.Status.CustomKubeConfig.Name,
+				},
+			}
+			if _, err := hyperutil.DeleteIfNeeded(ctx, r.Client, customKubeconfig); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to delete custom external kubeconfig secret %q: %w", client.ObjectKeyFromObject(customKubeconfig), err)
+			}
+			hcluster.Status.CustomKubeConfig = nil
+		}
+	}
+
 	// Reconcile the HostedControlPlane kubeadminPassword
 	if hcp.Status.KubeadminPassword != nil {
 		src := &corev1.Secret{
@@ -1965,6 +2033,19 @@ func reconcileHostedControlPlane(hcp *hyperv1.HostedControlPlane, hcluster *hype
 	}
 	if hcluster.Spec.SecretEncryption != nil {
 		hcp.Spec.SecretEncryption = hcluster.Spec.SecretEncryption.DeepCopy()
+	}
+
+	// If ROSA passes KubeAPICustomKubeconfig.CustomKubeConfig, we should pass it through to the HCP, otherwise
+	// we will keep it in blank for name auto-generation.
+	// If ROSA passes the KasDNSName but KasDNSName it's not set in the HC, we will not set anything.
+	if len(hcluster.Spec.KasDNSName) >= 0 {
+		if hcp.Spec.KasCustomKubeconfig != nil && hcp.Spec.KasCustomKubeconfig.SecretRef != nil {
+			hcp.Spec.KasCustomKubeconfig.KasDNSName = hcluster.Spec.KasDNSName
+		} else {
+			hcp.Spec.KasCustomKubeconfig = &hyperv1.CustomKubeconfig{
+				KasDNSName: hcluster.Spec.KasDNSName,
+			}
+		}
 	}
 
 	hcp.Spec.PausedUntil = hcluster.Spec.PausedUntil
