@@ -275,6 +275,21 @@ and is used to configure platform specific behavior.</p>
 </tr>
 <tr>
 <td>
+<code>kasDNSName</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>kasDNSName specifies a desired DNS name to resolve to the KAS.
+This can only be set if secretRef is also set. When set, the controller will automatically generate a secret with kubeconfig and expose it in the hostedCluster Status.
+If it&rsquo;s set or removed day 2, all generated objects will be created, recreated or deleted.
+The DNS entries should be resolvable from the cluster, so this should be manually configured in the DNS provider.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>controllerAvailabilityPolicy</code></br>
 <em>
 <a href="#hypershift.openshift.io/v1beta1.AvailabilityPolicy">
@@ -4482,6 +4497,56 @@ ManagedIdentity
 </tr>
 </tbody>
 </table>
+###CustomKubeconfig { #hypershift.openshift.io/v1beta1.CustomKubeconfig }
+<p>
+(<em>Appears on:</em>
+<a href="#hypershift.openshift.io/v1beta1.HostedControlPlaneSpec">HostedControlPlaneSpec</a>)
+</p>
+<p>
+<p>customKubeconfig is a group that englobes an additional KAS server address and the customkubeconfig generated for the kube-apiserver.</p>
+</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>kasDNSName</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>kasDNSName specifies a desired DNS name to resolve to the KAS.
+This can only be set if secretRef is also set. When set, the controller will automatically generate a secret with kubeconfig and expose it in the hostedCluster Status.
+If it&rsquo;s set or removed day 2, all generated objects will be created, recreated or deleted.
+The DNS entries should be resolvable from the cluster, so this should be manually configured in the DNS provider.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>SecretRef</code></br>
+<em>
+<a href="#hypershift.openshift.io/v1beta1.KubeconfigSecretRef">
+KubeconfigSecretRef
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>secretRef specifies the name and key for the External Custom kubeconfig secret.
+When set, it triggers the generation of a secret with the specified name containing a kubeconfig within the <code>HostedCluster</code> namespace.
+This kubeconfig will also be referenced in the <code>HostedCluster.status</code> as <code>customkubeconfig</code> (remarking that in the HC status is lowercase meanwhile this one is camelCase to keep the consistency with the rest of the spec).
+If removed during day-2 operations, all related secrets and status references will also be deleted.</p>
+</td>
+</tr>
+</tbody>
+</table>
 ###DNSSpec { #hypershift.openshift.io/v1beta1.DNSSpec }
 <p>
 (<em>Appears on:</em>
@@ -5041,6 +5106,21 @@ and is used to configure platform specific behavior.</p>
 </tr>
 <tr>
 <td>
+<code>kasDNSName</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>kasDNSName specifies a desired DNS name to resolve to the KAS.
+This can only be set if secretRef is also set. When set, the controller will automatically generate a secret with kubeconfig and expose it in the hostedCluster Status.
+If it&rsquo;s set or removed day 2, all generated objects will be created, recreated or deleted.
+The DNS entries should be resolvable from the cluster, so this should be manually configured in the DNS provider.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>controllerAvailabilityPolicy</code></br>
 <em>
 <a href="#hypershift.openshift.io/v1beta1.AvailabilityPolicy">
@@ -5469,6 +5549,23 @@ for the cluster.</p>
 </tr>
 <tr>
 <td>
+<code>customkubeconfig</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core">
+Kubernetes core/v1.LocalObjectReference
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>customkubeconfig specifies the name and key for the External Custom kubeconfig secret.
+When set, it triggers the generation of a secret with the specified name containing a kubeconfig within the <code>HostedCluster</code> namespace.
+This kubeconfig will also be referenced in the <code>HostedCluster.status</code> as <code>customkubeconfig</code>.
+If removed during day-2 operations, all related secrets and status references will also be deleted.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>kubeadminPassword</code></br>
 <em>
 <a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core">
@@ -5809,6 +5906,22 @@ KubeconfigSecretRef
 <td>
 <em>(Optional)</em>
 <p>KubeConfig specifies the name and key for the kubeconfig secret</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>kasCustomKubeconfig</code></br>
+<em>
+<a href="#hypershift.openshift.io/v1beta1.CustomKubeconfig">
+CustomKubeconfig
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>kasCustomKubeconfig is a group that encompasses an additional KAS server address and the customkubeconfig generated for the kube-apiserver. It specifies the configuration to generate a kubeconfig resolving through a kasDNSName.
+For this kubeconfig to successfully resolve, this needs to be used in conjunction with hostedCluster.apiServer.ServingCerts and hostedCluster.apiServer.ClientCA.
+DNS for this name resolution needs to be setup out of band to resolve to the kas publishing strategy</p>
 </td>
 </tr>
 <tr>
@@ -6171,6 +6284,22 @@ KubeconfigSecretRef
 <td>
 <p>KubeConfig is a reference to the secret containing the default kubeconfig
 for this control plane.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>customKubeConfig</code></br>
+<em>
+<a href="#hypershift.openshift.io/v1beta1.KubeconfigSecretRef">
+KubeconfigSecretRef
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>customKubeConfig specifies the name and key for the External Custom kubeconfig secret.
+This field is optional and only allowed if kubeApiExternalName is not empty. When set, they result in the generation of a secret with the given name containing a Kubeconfig within the hostedCluster namespace and a referenced by the hostedCluster.status object.
+When removed day 2 the secret will be deleted and the kubeconfig will be removed from the hostedCluster.status object.</p>
 </td>
 </tr>
 <tr>

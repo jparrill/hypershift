@@ -2273,6 +2273,43 @@ spec:
                   default value is kubernetes.default.svc, which only works for in-cluster
                   validation.
                 type: string
+              kasCustomKubeconfig:
+                description: |-
+                  kasCustomKubeconfig is a group that encompasses an additional KAS server address and the customkubeconfig generated for the kube-apiserver. It specifies the configuration to generate a kubeconfig resolving through a kasDNSName.
+                  For this kubeconfig to successfully resolve, this needs to be used in conjunction with hostedCluster.apiServer.ServingCerts and hostedCluster.apiServer.ClientCA.
+                  DNS for this name resolution needs to be setup out of band to resolve to the kas publishing strategy
+                properties:
+                  SecretRef:
+                    description: |-
+                      secretRef specifies the name and key for the External Custom kubeconfig secret.
+                      When set, it triggers the generation of a secret with the specified name containing a kubeconfig within the `HostedCluster` namespace.
+                      This kubeconfig will also be referenced in the `HostedCluster.status` as `customkubeconfig` (remarking that in the HC status is lowercase meanwhile this one is camelCase to keep the consistency with the rest of the spec).
+                      If removed during day-2 operations, all related secrets and status references will also be deleted.
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  kasDNSName:
+                    description: |-
+                      kasDNSName specifies a desired DNS name to resolve to the KAS.
+                      This can only be set if secretRef is also set. When set, the controller will automatically generate a secret with kubeconfig and expose it in the hostedCluster Status.
+                      If it's set or removed day 2, all generated objects will be created, recreated or deleted.
+                      The DNS entries should be resolvable from the cluster, so this should be manually configured in the DNS provider.
+                    maxLength: 253
+                    type: string
+                    x-kubernetes-validations:
+                    - message: kasDNSName must be a valid URL name (e.g., api.example.com)
+                      rule: self == "" || self.matches('^(?:(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}|[a-zA-Z0-9-]+)$')
+                type: object
+                x-kubernetes-validations:
+                - message: Both kasDNSName and SecretRef must be set together or both
+                    must be empty.
+                  rule: has(self.SecretRef) && has(self.SecretRef)
               kubeconfig:
                 description: KubeConfig specifies the name and key for the kubeconfig
                   secret
@@ -4007,6 +4044,20 @@ spec:
                 required:
                 - host
                 - port
+                type: object
+              customKubeConfig:
+                description: |-
+                  customKubeConfig specifies the name and key for the External Custom kubeconfig secret.
+                  This field is optional and only allowed if kubeApiExternalName is not empty. When set, they result in the generation of a secret with the given name containing a Kubeconfig within the hostedCluster namespace and a referenced by the hostedCluster.status object.
+                   When removed day 2 the secret will be deleted and the kubeconfig will be removed from the hostedCluster.status object.
+                properties:
+                  key:
+                    type: string
+                  name:
+                    type: string
+                required:
+                - key
+                - name
                 type: object
               externalManagedControlPlane:
                 default: true

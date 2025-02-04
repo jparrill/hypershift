@@ -115,6 +115,12 @@ type HostedControlPlaneSpec struct {
 	// +optional
 	KubeConfig *KubeconfigSecretRef `json:"kubeconfig,omitempty"`
 
+	// kasCustomKubeconfig is a group that encompasses an additional KAS server address and the customkubeconfig generated for the kube-apiserver. It specifies the configuration to generate a kubeconfig resolving through a kasDNSName.
+	// For this kubeconfig to successfully resolve, this needs to be used in conjunction with hostedCluster.apiServer.ServingCerts and hostedCluster.apiServer.ClientCA.
+	// DNS for this name resolution needs to be setup out of band to resolve to the kas publishing strategy
+	// +optional
+	KasCustomKubeconfig *CustomKubeconfig `json:"kasCustomKubeconfig,omitempty"`
+
 	// Services defines metadata about how control plane services are published
 	// in the management cluster.
 	// +kubebuilder:validation:MaxItems=6
@@ -200,6 +206,28 @@ type HostedControlPlaneSpec struct {
 	// +kubebuilder:validation:MaxProperties=20
 	// +optional
 	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// customKubeconfig is a group that englobes an additional KAS server address and the customkubeconfig generated for the kube-apiserver.
+// +kubebuilder:validation:XValidation:rule="has(self.SecretRef) && has(self.SecretRef)",message="Both kasDNSName and SecretRef must be set together or both must be empty."
+// +optional
+type CustomKubeconfig struct {
+	// kasDNSName specifies a desired DNS name to resolve to the KAS.
+	// This can only be set if secretRef is also set. When set, the controller will automatically generate a secret with kubeconfig and expose it in the hostedCluster Status.
+	// If it's set or removed day 2, all generated objects will be created, recreated or deleted.
+	// The DNS entries should be resolvable from the cluster, so this should be manually configured in the DNS provider.
+	// +kubebuilder:validation:XValidation:rule=`self == "" || self.matches('^(?:(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}|[a-zA-Z0-9-]+)$')`,message="kasDNSName must be a valid URL name (e.g., api.example.com)"
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:example: "api.example.com"
+	// +optional
+	KasDNSName string `json:"kasDNSName,omitempty"`
+
+	// secretRef specifies the name and key for the External Custom kubeconfig secret.
+	// When set, it triggers the generation of a secret with the specified name containing a kubeconfig within the `HostedCluster` namespace.
+	// This kubeconfig will also be referenced in the `HostedCluster.status` as `customkubeconfig` (remarking that in the HC status is lowercase meanwhile this one is camelCase to keep the consistency with the rest of the spec).
+	// If removed during day-2 operations, all related secrets and status references will also be deleted.
+	// +optional
+	SecretRef *KubeconfigSecretRef `json:"SecretRef,omitempty"`
 }
 
 // availabilityPolicy specifies a high level availability policy for components.
@@ -299,6 +327,12 @@ type HostedControlPlaneStatus struct {
 	// KubeConfig is a reference to the secret containing the default kubeconfig
 	// for this control plane.
 	KubeConfig *KubeconfigSecretRef `json:"kubeConfig,omitempty"`
+
+	// customKubeConfig specifies the name and key for the External Custom kubeconfig secret.
+	// This field is optional and only allowed if kubeApiExternalName is not empty. When set, they result in the generation of a secret with the given name containing a Kubeconfig within the hostedCluster namespace and a referenced by the hostedCluster.status object.
+	//  When removed day 2 the secret will be deleted and the kubeconfig will be removed from the hostedCluster.status object.
+	// +optional
+	CustomKubeConfig *KubeconfigSecretRef `json:"customKubeConfig,omitempty"`
 
 	// KubeadminPassword is a reference to the secret containing the initial kubeadmin password
 	// for the guest cluster.
