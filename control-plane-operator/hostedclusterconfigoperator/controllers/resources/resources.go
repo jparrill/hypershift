@@ -22,6 +22,7 @@ import (
 	"github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/cco"
 	ccm "github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/cloudcontrollermanager/azure"
 	"github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/crd"
+	dataplaneworkeragent "github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/dataplaneworkeragent"
 	globalpullsecret "github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/globalps"
 	"github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/ingress"
 	"github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/kas"
@@ -2926,13 +2927,22 @@ func (r *reconciler) reconcileGlobalPullSecret(ctx context.Context, hcp *hyperv1
 		return fmt.Errorf("failed to create global pull secret: %w", err)
 	}
 
-	// Use the Global Pull Secret to deploy the DaemonSet in the DataPlane.
-	daemonSet := manifests.GlobalPullSecretDaemonSet()
-	if err := globalpullsecret.ReconcileDaemonSet(ctx, daemonSet, globalPullSecretBytes, r.uncachedClient, r.CreateOrUpdate, cpoImage); err != nil {
-		return fmt.Errorf("failed to reconcile global pull secret daemon set: %w", err)
+	// Check if data-plane-worker-agent is enabled via annotation
+	if isDataPlaneWorkerAgentEnabled(hcp) {
+		log.Info("Data Plane Worker Agent enabled, using worker-based approach")
+
+		// Use the worker-agent instead of the direct DaemonSet
+		if err := dataplaneworkeragent.ReconcileDataPlaneWorkerAgent(ctx, r.uncachedClient, r.CreateOrUpdate, hcp, cpoImage); err != nil {
+			return fmt.Errorf("failed to reconcile data plane worker agent: %w", err)
+		}
 	}
 
 	return nil
+}
+
+// isDataPlaneWorkerAgentEnabled checks if the data-plane-worker-agent is enabled via annotation
+func isDataPlaneWorkerAgentEnabled(hcp *hyperv1.HostedControlPlane) bool {
+	return hcp.Annotations["hypershift.openshift.io/enable-data-plane-worker-agent"] == "true"
 }
 
 // imageRegistryPlatformWithPVC returns true if the platform requires a PVC for the image registry.

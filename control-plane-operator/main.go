@@ -18,6 +18,7 @@ import (
 	"github.com/openshift/hypershift/control-plane-operator/featuregates"
 	"github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator"
 	pkiconfig "github.com/openshift/hypershift/control-plane-pki-operator/config"
+	dataplaneworkeragent "github.com/openshift/hypershift/data-plane-worker-agent/cmd"
 	"github.com/openshift/hypershift/dnsresolver"
 	etcdbackup "github.com/openshift/hypershift/etcd-backup"
 	etcddefrag "github.com/openshift/hypershift/etcd-defrag"
@@ -149,6 +150,7 @@ func defaultCommand() *cobra.Command {
 	cmd.AddCommand(kasbootstrap.NewRunCommand())
 	cmd.AddCommand(syncfgconfigmap.NewRunCommand())
 	cmd.AddCommand(syncpullsecret.NewRunCommand())
+	cmd.AddCommand(dataplaneworkeragent.NewStartCommand())
 	return cmd
 }
 
