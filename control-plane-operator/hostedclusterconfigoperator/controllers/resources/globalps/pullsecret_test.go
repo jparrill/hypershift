@@ -125,6 +125,20 @@ func TestMergePullSecrets(t *testing.T) {
 			additionalSecret: []byte(`invalid json`),
 			wantErr:          true,
 		},
+		{
+			name:             "empty additional secret, invalid JSON",
+			originalSecret:   composePullSecretBytes(map[string]string{"registry1": validAuth}),
+			additionalSecret: []byte{},
+			expectedResult:   composePullSecretBytes(map[string]string{"registry1": validAuth}),
+			wantErr:          true,
+		},
+		{
+			name:             "empty additional secret with valid JSON",
+			originalSecret:   composePullSecretBytes(map[string]string{"registry1": validAuth, "registry2": validAuth}),
+			additionalSecret: []byte(`{"auths":{}}`),
+			expectedResult:   composePullSecretBytes(map[string]string{"registry1": validAuth, "registry2": validAuth}),
+			wantErr:          false,
+		},
 	}
 
 	for _, tt := range tests {

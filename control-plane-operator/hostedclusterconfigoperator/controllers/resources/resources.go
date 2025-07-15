@@ -110,6 +110,8 @@ var (
 	// only once.
 	deleteDNSOperatorDeploymentOnce sync.Once
 	deleteCVORemovedResourcesOnce   sync.Once
+
+	recoverBeforeShutdown = true
 )
 
 const azureCCMScript = `
@@ -814,6 +816,9 @@ func (r *reconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result
 	hccoImage := os.Getenv("HOSTED_CLUSTER_CONFIG_OPERATOR_IMAGE")
 	if err := r.reconcileGlobalPullSecret(ctx, hcp, hccoImage); err != nil {
 		errs = append(errs, fmt.Errorf("failed to reconcile global pull secret: %w", err))
+		if strings.Contains(err.Error(), "global pull secret syncer signaled to shutdown") {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, errors.NewAggregate(errs)
+		}
 	}
 
 	return ctrl.Result{}, errors.NewAggregate(errs)
@@ -2950,6 +2955,37 @@ func (r *reconciler) reconcileGlobalPullSecret(ctx context.Context, hcp *hyperv1
 
 	if !exists {
 		// Early cleanup
+		if recoverBeforeShutdown {
+			// Recover the original pull secret
+			log.Info("Recovering original pull secret")
+			originalPullSecret := manifests.PullSecret(hcp.Namespace)
+			if err := r.cpClient.Get(ctx, client.ObjectKeyFromObject(originalPullSecret), originalPullSecret); err != nil {
+				return fmt.Errorf("failed to get original pull secret: %w", err)
+			}
+			originalPullSecretBytes = originalPullSecret.Data[corev1.DockerConfigJsonKey]
+
+			// Merge the additional pull secret with the original pull secret
+			if globalPullSecretBytes, err = globalpullsecret.MergePullSecrets(ctx, originalPullSecretBytes, []byte(`{"auths":{}}`)); err != nil {
+				return fmt.Errorf("failed to merge pull secrets: %w", err)
+			}
+
+			// Create secret in the DataPlane
+			secret := manifests.GlobalPullSecret()
+			if _, err := r.CreateOrUpdate(ctx, r.uncachedClient, secret, func() error {
+				secret.Data = map[string][]byte{
+					corev1.DockerConfigJsonKey: globalPullSecretBytes,
+				}
+				return nil
+			}); err != nil {
+				return fmt.Errorf("failed to create global pull secret: %w", err)
+			}
+			log.Info("Original pull secret recovered, global pull secret syncer signaled to shutdown")
+			recoverBeforeShutdown = false
+
+			return fmt.Errorf("original pull secret recovered, global pull secret syncer signaled to shutdown")
+		}
+
+		// Delete the global pull secret and the daemon set
 		secret := manifests.GlobalPullSecret()
 		if err := r.uncachedClient.Delete(ctx, secret); err != nil {
 			if !apierrors.IsNotFound(err) {
@@ -2978,6 +3014,7 @@ func (r *reconciler) reconcileGlobalPullSecret(ctx context.Context, hcp *hyperv1
 	}
 
 	log.Info("Valid additional pull secret found in the DataPlane, reconciling global pull secret")
+	recoverBeforeShutdown = true
 
 	// Get the original pull secret
 	originalPullSecret := manifests.PullSecret(hcp.Namespace)

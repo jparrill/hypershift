@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -20,20 +21,24 @@ import (
 	awsprivatelink "github.com/openshift/hypershift/control-plane-operator/controllers/awsprivatelink"
 	cpomanifests "github.com/openshift/hypershift/control-plane-operator/controllers/hostedcontrolplane/manifests"
 	hccokasvap "github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/kas"
+	hccomanifests "github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/manifests"
 	hcmetrics "github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster/metrics"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests"
 	karpenterassets "github.com/openshift/hypershift/karpenter-operator/controllers/karpenter/assets"
 	"github.com/openshift/hypershift/support/certs"
 	"github.com/openshift/hypershift/support/conditions"
 	suppconfig "github.com/openshift/hypershift/support/config"
+	"github.com/openshift/hypershift/support/releaseinfo/registryclient"
 	"github.com/openshift/hypershift/support/util"
 	hyperutil "github.com/openshift/hypershift/support/util"
 
 	configv1 "github.com/openshift/api/config/v1"
+	imagev1 "github.com/openshift/api/image/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	routev1client "github.com/openshift/client-go/route/clientset/versioned"
 	"github.com/openshift/library-go/test/library/metrics"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -54,6 +59,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/kubernetes"
 	kubeclient "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
@@ -62,12 +68,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	"encoding/base64"
+
 	"github.com/go-logr/logr"
 	"github.com/go-logr/zapr"
 	"github.com/google/go-cmp/cmp"
 	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"go.uber.org/zap/zaptest"
+)
+
+const (
+	registryURL = "image-registry.openshift-image-registry.svc:5000"
 )
 
 var expectedKasManagementComponents = []string{
@@ -1506,6 +1518,541 @@ func EnsureGuestWebhooksValidated(t *testing.T, ctx context.Context, guestClient
 	})
 }
 
+func EnsureGlobalPullSecret(t *testing.T, ctx context.Context, mgmtClient crclient.Client, guestClient crclient.Client, entryHostedCluster *hyperv1.HostedCluster) error {
+	//AtLeast(t, Version420)
+
+	var (
+		//dummyImageTagMultiarch = "quay.io/hypershift/sleep:multiarch"
+		dummyImageTag12 = "quay.io/hypershift/sleep:1.2.0"
+		err             error
+		//saClient   crclient.Client
+
+		// Additional Pull Secret
+		registrySecretName      = "additional-pull-secret"
+		registryNamespace       = "kube-system"
+		dummyPullSecretData     = []byte(`{"auths": {"quay.io": {"auth": "YWRtaW46cGFzc3dvcmQ="}}}`)
+		validPullSecretData     = []byte(`{"auths": {"quay.io": {"auth": "aHlwZXJzaGlmdCtlMmVfcmVhZG9ubHk6R1U2V0ZDTzVaVkJHVDJPREE1VVAxT0lCOVlNMFg2TlY0UkZCT1lJSjE3TDBWOFpTVlFGVE5BS0daNTNNQVAzRA=="}}}`)
+		oldglobalPullSecretData []byte
+	)
+	g := NewWithT(t)
+
+	//guestKubeConfigSecretData := WaitForGuestKubeConfig(t, ctx, mgmtClient, entryHostedCluster)
+	//guestConfig, err := clientcmd.RESTConfigFromKubeConfig(guestKubeConfigSecretData)
+	//g.Expect(err).NotTo(HaveOccurred(), "failed to load guest kubeconfig")
+
+	//guestClientSet, err := kubernetes.NewForConfig(guestConfig)
+	//g.Expect(err).NotTo(HaveOccurred(), "failed to create kubernetes client")
+
+	// Configure openshift internal registry with an SA to pull and push images against a concrete namespace of the registry
+	// Recover the token for the pull secret and add it to the additional-pull-secret secret.
+	//saClient, err = configureRBACForInternalRegistry(t, ctx, guestClient, guestClientSet, registrySecretName)
+	//g.Expect(err).NotTo(HaveOccurred(), "failed to configure internal registry")
+
+	// Pull the dummy image and push it to the internal registry using the SA client
+	//err = pullAndPushImage(t, ctx, guestClient, dummyImage, registryNamespace)
+	//g.Expect(err).NotTo(HaveOccurred(), "should be able to pull and push image")
+
+	// Create the additional-pull-secret secret in the DataPlane using the dummy pull secret.
+	// The dummy pull secret is authorized to pull restricted images.
+	err = createAdditionalPullSecret(ctx, guestClient, dummyPullSecretData, registrySecretName, registryNamespace)
+	g.Expect(err).NotTo(HaveOccurred(), "failed to create additional-pull-secret secret")
+
+	// Check if additional-pull-secret secret is in the right place at Dataplane
+	t.Run("Check if additional-pull-secret secret is in the right place at Dataplane", func(t *testing.T) {
+		t.Log("Checking if additional-pull-secret secret is in the right place at Dataplane")
+		additionalPullSecret := hccomanifests.UserProvidedPullSecret()
+		g.Eventually(func() error {
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: additionalPullSecret.Name, Namespace: additionalPullSecret.Namespace}, additionalPullSecret); err != nil {
+				return err
+			}
+			return nil
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "additional-pull-secret secret is not present")
+		g.Expect(additionalPullSecret.Data).NotTo(BeEmpty(), "additional-pull-secret secret is empty")
+		g.Expect(additionalPullSecret.Data[corev1.DockerConfigJsonKey]).NotTo(BeEmpty(), "additional-pull-secret secret is empty")
+	})
+
+	// Check if HCCO generates the GlobalPullSecret secret in the kube-system namespace in the DataPlane
+	t.Run("Check if GlobalPullSecret secret is in the right place at Dataplane", func(t *testing.T) {
+		t.Log("Checking if GlobalPullSecret secret is in the right place at Dataplane")
+		globalPullSecret := hccomanifests.GlobalPullSecret()
+		g.Eventually(func() error {
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: globalPullSecret.Name, Namespace: globalPullSecret.Namespace}, globalPullSecret); err != nil {
+				return err
+			}
+			g.Expect(globalPullSecret.Data).NotTo(BeEmpty(), "global-pull-secret secret is empty")
+			g.Expect(globalPullSecret.Data[corev1.DockerConfigJsonKey]).NotTo(BeEmpty(), "global-pull-secret secret is empty")
+			oldglobalPullSecretData = globalPullSecret.Data[corev1.DockerConfigJsonKey]
+			return nil
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "global-pull-secret secret is not present")
+	})
+
+	// Check if the additional RBAC is present in the DataPlane
+	t.Run("Check if the additional RBAC is present in the DataPlane", func(t *testing.T) {
+		t.Log("Checking if the additional RBAC is present in the DataPlane")
+		g.Eventually(func() error {
+			role := hccomanifests.GlobalPullSecretRole()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: role.Name, Namespace: role.Namespace}, role); err != nil {
+				return err
+			}
+
+			roleBinding := hccomanifests.GlobalPullSecretRoleBinding()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: roleBinding.Name, Namespace: roleBinding.Namespace}, roleBinding); err != nil {
+				return err
+			}
+
+			serviceAccount := hccomanifests.GlobalPullSecretServiceAccount()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: serviceAccount.Name, Namespace: serviceAccount.Namespace}, serviceAccount); err != nil {
+				return err
+			}
+
+			return nil
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "RBAC is not present")
+	})
+
+	// Check if the DaemonSet is present in the DataPlane
+	t.Run("Check if the DaemonSet is present in the DataPlane", func(t *testing.T) {
+		t.Log("Checking if the DaemonSet is present in the DataPlane")
+		g.Eventually(func() error {
+			daemonSet := hccomanifests.GlobalPullSecretDaemonSet()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: daemonSet.Name, Namespace: daemonSet.Namespace}, daemonSet); err != nil {
+				return err
+			}
+			return nil
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "DaemonSet is not present")
+	})
+
+	// Wait 10 seconds to ensure the DaemonSet is present
+	t.Log("Waiting 10 seconds to ensure the DaemonSet is present")
+	time.Sleep(10 * time.Second)
+
+	// Check if we can pull restricted images
+	//t.Run("Check if we can pull restricted images, should fail", func(t *testing.T) {
+	//	t.Log("Checking if we can pull restricted images, should fail")
+	//	globalPullSecret := hccomanifests.GlobalPullSecret()
+	//	err := guestClient.Get(ctx, client.ObjectKey{Name: globalPullSecret.Name, Namespace: globalPullSecret.Namespace}, globalPullSecret)
+	//	g.Expect(err).NotTo(HaveOccurred(), "should be able to get global-pull-secret secret")
+	//	pullSecretData := globalPullSecret.Data[corev1.DockerConfigJsonKey]
+	//	_, _, _, err = registryclient.GetMetadata(ctx, dummyImageTagMultiarch, pullSecretData)
+	//	g.Expect(err).To(HaveOccurred(), "should not be able to get repo setup")
+	//})
+
+	// Create a pod which uses the restricted image, should fail
+	//t.Run("Create a pod which uses the restricted image, should fail", func(t *testing.T) {
+	//	shouldFail := true
+	//	runAndCheckPod(t, ctx, guestClient, dummyImageTagMultiarch, registryNamespace, "global-pull-secret-test", shouldFail)
+	//})
+
+	// Modify the additional-pull-secret secret in the DataPlane
+	t.Run("Modify the additional-pull-secret secret in the DataPlane by adding the valid pull secret", func(t *testing.T) {
+		t.Log("Modifying the additional-pull-secret secret in the DataPlane")
+		additionalPullSecret := hccomanifests.UserProvidedPullSecret()
+		err := guestClient.Get(ctx, client.ObjectKey{Name: additionalPullSecret.Name, Namespace: additionalPullSecret.Namespace}, additionalPullSecret)
+		g.Expect(err).NotTo(HaveOccurred(), "failed to get additional-pull-secret secret")
+		additionalPullSecret.Data[corev1.DockerConfigJsonKey] = validPullSecretData
+		err = guestClient.Update(ctx, additionalPullSecret)
+		g.Expect(err).NotTo(HaveOccurred(), "failed to update additional-pull-secret secret")
+	})
+
+	// Check if the additional-pull-secret secret is updated in the DataPlane
+	t.Run("Check if the additional-pull-secret secret is updated in the DataPlane", func(t *testing.T) {
+		t.Log("Checking if the additional-pull-secret secret is updated in the DataPlane")
+		g.Eventually(func() error {
+			pullSecret := hccomanifests.UserProvidedPullSecret()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: pullSecret.Name, Namespace: pullSecret.Namespace}, pullSecret); err != nil {
+				return err
+			}
+			g.Expect(pullSecret.Data[corev1.DockerConfigJsonKey]).NotTo(BeEmpty(), "additional-pull-secret secret is empty")
+			currentPullSecret := pullSecret.Data[corev1.DockerConfigJsonKey]
+			if bytes.Equal(currentPullSecret, dummyPullSecretData) {
+				return fmt.Errorf("additional-pull-secret secret is equal to the dummy pull secret, should be different")
+			}
+			if !bytes.Equal(currentPullSecret, validPullSecretData) {
+				return fmt.Errorf("additional-pull-secret secret is different from the valid pull secret, should be equal")
+			}
+
+			return nil
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "additional-pull-secret secret is not present")
+	})
+
+	// Check if GlobalPullSecret secret is updated in the DataPlane
+	t.Run("Check if GlobalPullSecret secret is updated in the DataPlane", func(t *testing.T) {
+		t.Log("Checking if GlobalPullSecret secret is updated in the DataPlane")
+		globalPullSecret := hccomanifests.GlobalPullSecret()
+		g.Eventually(func() error {
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: globalPullSecret.Name, Namespace: globalPullSecret.Namespace}, globalPullSecret); err != nil {
+				return err
+			}
+			g.Expect(globalPullSecret.Data[corev1.DockerConfigJsonKey]).NotTo(BeEmpty(), "global-pull-secret secret is empty")
+			if bytes.Equal(globalPullSecret.Data[corev1.DockerConfigJsonKey], oldglobalPullSecretData) {
+				return fmt.Errorf("global-pull-secret secret is equal to the old global-pull-secret secret, should be different")
+			}
+			return nil
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "global-pull-secret secret is not updated")
+	})
+
+	// Check if we can pull other restricted images, should succeed
+	t.Run("Check if we can pull other restricted images, should succeed", func(t *testing.T) {
+		t.Log("Checking if we can pull other restricted images, should succeed")
+		globalPullSecret := hccomanifests.GlobalPullSecret()
+		err := guestClient.Get(ctx, client.ObjectKey{Name: globalPullSecret.Name, Namespace: globalPullSecret.Namespace}, globalPullSecret)
+		g.Expect(err).NotTo(HaveOccurred(), "failed to get global-pull-secret secret")
+		pullSecretData := globalPullSecret.Data[corev1.DockerConfigJsonKey]
+		_, _, _, err = registryclient.GetMetadata(ctx, dummyImageTag12, pullSecretData)
+		g.Expect(err).NotTo(HaveOccurred(), "should be able to pull other restricted images")
+	})
+
+	// Check if we can run a pod with the restricted image
+	t.Run("Check if we can run a pod with another tag of that restricted image", func(t *testing.T) {
+		shouldFail := false
+		runAndCheckPod(t, ctx, guestClient, dummyImageTag12, registryNamespace, "global-pull-secret-test", shouldFail)
+	})
+
+	// Delete the additional-pull-secret secret in the DataPlane
+	t.Log("Deleting the additional-pull-secret secret in the DataPlane")
+	err = guestClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: registrySecretName, Namespace: registryNamespace}})
+	g.Expect(err).NotTo(HaveOccurred(), "failed to delete additional-pull-secret secret")
+
+	t.Run("Check if the additional-pull-secret secret is deleted in the DataPlane", func(t *testing.T) {
+		t.Log("Checking if the additional-pull-secret secret is deleted in the DataPlane")
+		additionalPullSecret := &corev1.Secret{}
+		g.Eventually(func() error {
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: registrySecretName, Namespace: registryNamespace}, additionalPullSecret); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return err
+				}
+				return nil
+			}
+			return fmt.Errorf("additional-pull-secret secret is still present")
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "additional-pull-secret secret is still present")
+	})
+
+	// Check if the GlobalPullSecret secret is deleted in the DataPlane
+	t.Run("Check if the GlobalPullSecret secret is deleted in the DataPlane", func(t *testing.T) {
+		t.Log("Checking if the GlobalPullSecret secret is deleted in the DataPlane")
+		g.Eventually(func() error {
+			globalPullSecret := hccomanifests.GlobalPullSecret()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: globalPullSecret.Name, Namespace: globalPullSecret.Namespace}, globalPullSecret); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return err
+				}
+				return nil
+			}
+			return fmt.Errorf("global-pull-secret secret is still present")
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "global-pull-secret secret is still present")
+	})
+
+	// Check if the DaemonSet is deleted in the DataPlane
+	t.Run("Check if the DaemonSet is deleted in the DataPlane", func(t *testing.T) {
+		t.Log("Checking if the DaemonSet is deleted in the DataPlane")
+		g.Eventually(func() error {
+			daemonSet := hccomanifests.GlobalPullSecretDaemonSet()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: daemonSet.Name, Namespace: daemonSet.Namespace}, daemonSet); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return err
+				}
+				return nil
+			}
+			return fmt.Errorf("DaemonSet is still present")
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "DaemonSet is still present")
+	})
+
+	// Check if the additional RBAC is deleted in the DataPlane
+	t.Run("Check if the additional RBAC is deleted in the DataPlane", func(t *testing.T) {
+		t.Log("Checking if the additional RBAC is deleted in the DataPlane")
+		g.Eventually(func() error {
+			role := hccomanifests.GlobalPullSecretRole()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: role.Name, Namespace: role.Namespace}, role); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return err
+				}
+				return nil
+			}
+
+			roleBinding := hccomanifests.GlobalPullSecretRoleBinding()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: roleBinding.Name, Namespace: roleBinding.Namespace}, roleBinding); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return err
+				}
+				return nil
+			}
+
+			serviceAccount := hccomanifests.GlobalPullSecretServiceAccount()
+			if err := guestClient.Get(ctx, client.ObjectKey{Name: serviceAccount.Name, Namespace: serviceAccount.Namespace}, serviceAccount); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return err
+				}
+				return nil
+			}
+
+			return nil
+		}, 20*time.Minute, 5*time.Second).Should(Succeed(), "RBAC is not present")
+	})
+
+	return nil
+
+}
+
+func configureRBACForInternalRegistry(t *testing.T, ctx context.Context, guestClient crclient.Client, guestClientSet *kubernetes.Clientset, registrySecretName string) (crclient.Client, error) {
+	var (
+		registryNamespace       = "kube-system"
+		registrySAName          = fmt.Sprintf("%s-sa", registrySecretName)
+		registryRoleName        = fmt.Sprintf("%s-role", registrySecretName)
+		registryRoleBindingName = fmt.Sprintf("%s-role-binding", registrySecretName)
+		g                       = NewWithT(t)
+	)
+
+	t.Log("Configuring RBAC for internal registry")
+
+	// Create a service account for internal registry access
+	t.Log("Creating service account for internal registry access")
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      registrySAName,
+			Namespace: registryNamespace,
+		},
+	}
+
+	// Create the service account
+	if err := guestClient.Create(ctx, sa); err != nil && !apierrors.IsAlreadyExists(err) {
+		return nil, fmt.Errorf("failed to create service account: %v", err)
+	}
+
+	// Create a role for registry access with proper permissions for push/pull
+	t.Log("Creating role for registry access with proper permissions for push/pull")
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      registryRoleName,
+			Namespace: registryNamespace,
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"secrets"},
+				Verbs:     []string{"get", "list", "watch", "create", "update"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"services"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				APIGroups: []string{"image.openshift.io"},
+				Resources: []string{"*"},
+				Verbs:     []string{"*"},
+			},
+			{
+				APIGroups: []string{"build.openshift.io"},
+				Resources: []string{"builds"},
+				Verbs:     []string{"get", "list", "watch", "create", "update"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"apiservices"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				APIGroups: []string{"apiextensions.k8s.io"},
+				Resources: []string{"customresourcedefinitions"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"namespaces"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+		},
+	}
+
+	// Create the role
+	if err := guestClient.Create(ctx, role); err != nil && !apierrors.IsAlreadyExists(err) {
+		return nil, fmt.Errorf("failed to create role: %v", err)
+	}
+
+	// Create a role binding to bind the service account to the role
+	t.Log("Creating role binding to bind the service account to the role")
+	roleBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      registryRoleBindingName,
+			Namespace: registryNamespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      sa.Name,
+				Namespace: sa.Namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     role.Name,
+		},
+	}
+
+	// Create the role binding
+	if err := guestClient.Create(ctx, roleBinding); err != nil && !apierrors.IsAlreadyExists(err) {
+		return nil, fmt.Errorf("failed to create role binding: %v", err)
+	}
+
+	// Create a token request for the service account
+	t.Log("Creating token request for the service account")
+	tokenRequest := &authenticationv1.TokenRequest{
+		Spec: authenticationv1.TokenRequestSpec{
+			Audiences: []string{"https://kubernetes.default.svc.cluster.local"},
+		},
+	}
+
+	// Get the token for the service account using TokenRequest API
+	tokenResponse, err := guestClientSet.CoreV1().ServiceAccounts(registryNamespace).CreateToken(ctx, registrySAName, tokenRequest, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token for service account: %v", err)
+	}
+
+	token := tokenResponse.Status.Token
+
+	// Create a secret with a proper Docker config for internal registry access
+	// For internal registry, we typically don't need authentication for basic operations
+	t.Log("Creating secret with Docker config for internal registry access")
+
+	// Create Docker config JSON using the SA token for authentication
+	// The auth field should be base64 encoded "username:password" where username is the SA name and password is the token
+	authString := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", sa.Name, token)))
+
+	dockerConfig := map[string]interface{}{
+		"auths": map[string]interface{}{
+			registryURL: map[string]interface{}{
+				"auth": authString,
+			},
+		},
+	}
+
+	dockerConfigJSON, err := json.Marshal(dockerConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Docker config JSON: %v", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      registrySecretName,
+			Namespace: registryNamespace,
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: dockerConfigJSON,
+		},
+	}
+
+	// Create the secret
+	if err := guestClient.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		return nil, fmt.Errorf("failed to create secret: %v", err)
+	}
+
+	// Create a crclient using the SA token for authentication
+	saConfig := rest.Config{
+		Host:        guestClientSet.RESTClient().Get().URL().String(),
+		BearerToken: token,
+		TLSClientConfig: rest.TLSClientConfig{
+			Insecure: true,
+		},
+	}
+
+	saClient, err := crclient.New(&saConfig, crclient.Options{
+		Scheme: scheme,
+	})
+	g.Expect(err).NotTo(HaveOccurred(), "failed to create crclient with SA token")
+
+	t.Logf("Successfully configured internal registry with service account %s and secret %s", sa.Name, secret.Name)
+	return saClient, nil
+}
+
+func createAdditionalPullSecret(ctx context.Context, guestClient crclient.Client, pullSecretData []byte, registrySecretName, registryNamespace string) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      registrySecretName,
+			Namespace: registryNamespace,
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: pullSecretData,
+		},
+	}
+
+	if err := guestClient.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create secret: %v", err)
+	}
+
+	return nil
+}
+
+func pullAndPushImage(t *testing.T, ctx context.Context, saClient crclient.Client, image, namespace string) error {
+	g := NewWithT(t)
+	t.Logf("Creating ImageStreamImport to pull image %s using internal registry SA", image)
+
+	// Create an ImageStreamImport to import the external image
+	imageStreamImport := &imagev1.ImageStreamImport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-image-import",
+			Namespace: namespace,
+		},
+		Spec: imagev1.ImageStreamImportSpec{
+			Import: true,
+			Images: []imagev1.ImageImportSpec{
+				{
+					From: corev1.ObjectReference{
+						Kind: "DockerImage",
+						Name: image,
+					},
+					To: &corev1.LocalObjectReference{
+						Name: "latest",
+					},
+					ImportPolicy: imagev1.TagImportPolicy{
+						ImportMode: imagev1.ImportModePreserveOriginal,
+					},
+				},
+			},
+		},
+	}
+
+	// Create the ImageStreamImport using the SA client
+	err := saClient.Create(ctx, imageStreamImport)
+	g.Expect(err).NotTo(HaveOccurred(), "failed to create ImageStreamImport")
+
+	// Check the status immediately after creation since ImageStreamImport gets deleted after completion
+	t.Log("Waiting for ImageStreamImport to complete")
+	g.Eventually(func() error {
+		var currentImport imagev1.ImageStreamImport
+		if err := saClient.Get(ctx, types.NamespacedName{Name: imageStreamImport.Name, Namespace: imageStreamImport.Namespace}, &currentImport); err != nil {
+			// If the ImageStreamImport was deleted, check if it completed successfully
+			if apierrors.IsNotFound(err) {
+				// The import completed and the resource was deleted
+				t.Log("ImageStreamImport completed and was deleted")
+				return nil
+			}
+			return err
+		}
+
+		// Check if the import was successful
+		if len(currentImport.Status.Images) > 0 {
+			imageStatus := currentImport.Status.Images[0]
+			if imageStatus.Status.Status == "Success" {
+				t.Logf("Image imported successfully: %s", imageStatus.Image.DockerImageReference)
+				return nil
+			} else {
+				return fmt.Errorf("image import failed: %s", imageStatus.Status.Message)
+			}
+		}
+		return fmt.Errorf("ImageStreamImport was not completed within timeout")
+	}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+	t.Log("Image successfully imported and available in internal registry")
+	return nil
+}
+
 func EnsureKubeAPIDNSNameCustomCert(t *testing.T, ctx context.Context, mgmtClient crclient.Client, entryHostedCluster *hyperv1.HostedCluster) {
 	AtLeast(t, Version419)
 	serviceDomain := "service.ci.hypershift.devcluster.openshift.com"
@@ -2721,4 +3268,56 @@ func EnsureConsoleCapabilityDisabled(ctx context.Context, t *testing.T, g Gomega
 		g.Expect(err).To(HaveOccurred())
 		g.Expect(err.Error()).To(ContainSubstring("namespaces \"openshift-console\" not found"))
 	})
+}
+
+// runAndCheckPod creates a pod which uses the restricted image and checks if it is running using sleep command.
+// It also deletes the pod after it is running.
+// Added an arguument shouldFail to check if the pod should fail to run.
+func runAndCheckPod(t *testing.T, ctx context.Context, guestClient crclient.Client, imageTag, namespace, name string, shouldFail bool) {
+	g := NewWithT(t)
+	t.Log("Creating a pod which uses the restricted image")
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-pod", name),
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    fmt.Sprintf("%s-container", name),
+					Image:   imageTag,
+					Command: []string{"sleep", "10m"},
+				},
+			},
+		},
+	}
+
+	t.Log("Waiting for 10 seconds to ensure the pod is created")
+	err := guestClient.Create(ctx, pod)
+	time.Sleep(100 * time.Second)
+	t.Logf("Created pod %s in namespace %s", pod.Name, pod.Namespace)
+	g.Expect(err).NotTo(HaveOccurred(), "failed to create pod")
+	g.Eventually(func() error {
+		pod := &corev1.Pod{}
+		err := guestClient.Get(ctx, client.ObjectKey{Name: fmt.Sprintf("%s-pod", name), Namespace: namespace}, pod)
+		if err != nil {
+			return err
+		}
+		if shouldFail {
+			if pod.Status.ContainerStatuses[0].State.Waiting.Reason == "ImagePullBackOff" {
+				return fmt.Errorf("pod is not running")
+			}
+			return nil
+		} else {
+			if pod.Status.Phase != corev1.PodRunning {
+				return fmt.Errorf("pod is running")
+			}
+			return nil
+		}
+	}, 20*time.Minute, 5*time.Second).Should(Succeed(), "pod is not running")
+
+	t.Log("Pod is in the desired state, deleting it now")
+	err = guestClient.Delete(ctx, pod)
+	g.Expect(err).NotTo(HaveOccurred(), "failed to delete pod")
+	t.Log("Deleted the pod")
 }

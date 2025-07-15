@@ -1467,6 +1467,11 @@ func TestCreateClusterCustomConfig(t *testing.T) {
 
 		// ensure console component is disabled
 		e2eutil.EnsureConsoleCapabilityDisabled(ctx, t, g, clients)
+		// ensure KAS DNS name is configured with a KAS Serving cert
+		e2eutil.EnsureKubeAPIDNSNameCustomCert(t, ctx, mgtClient, hostedCluster)
+
+		// ensure global pull secret
+		e2eutil.EnsureGlobalPullSecret(t, ctx, mgtClient, guestClient, hostedCluster)
 	}).Execute(&clusterOpts, globalOpts.Platform, globalOpts.ArtifactDir, "custom-config", globalOpts.ServiceAccountSigningKey)
 }
 

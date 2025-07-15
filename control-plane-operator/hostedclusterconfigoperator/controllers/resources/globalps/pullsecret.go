@@ -218,7 +218,6 @@ func ReconcileGlobalPullSecretRBAC(ctx context.Context, c crclient.Client, creat
 	log.Info("Reconciling global pull secret RBAC", "exists", exists)
 
 	if !exists {
-		log.Info("Removing global pull secret RBAC resources", "exists", exists)
 		sa := manifests.GlobalPullSecretServiceAccount()
 		if err := c.Delete(ctx, sa); err != nil {
 			if !apierrors.IsNotFound(err) {
