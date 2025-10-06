@@ -136,6 +136,7 @@ func (h *hypershiftTest) before(hostedCluster *hyperv1.HostedCluster, opts *Plat
 			ValidateAuthenticationSpec(t, h.ctx, h.client, hostedCluster, opts.ExtOIDCConfig)
 		}
 	})
+
 }
 
 // runs after each test.
@@ -144,6 +145,7 @@ func (h *hypershiftTest) after(hostedCluster *hyperv1.HostedCluster, platform hy
 		// skip if Main failed
 		return
 	}
+
 	h.Run("EnsureHostedCluster", func(t *testing.T) {
 		hcpNs := manifests.HostedControlPlaneNamespace(hostedCluster.Namespace, hostedCluster.Name)
 
@@ -211,11 +213,12 @@ func (h *hypershiftTest) after(hostedCluster *hyperv1.HostedCluster, platform hy
 			}
 			ValidateHostedClusterConditions(t, t.Context(), h.client, hostedCluster, hasWorkerNodes, 10*time.Minute)
 		}
+	})
 
-		// Run EnsureGlobalPullSecret at the end to avoid interference with upgrade tests
-		// that may have executed earlier in the same cluster. This test modifies
-		// /var/lib/kubelet/config.json and can cause disk validation failures in upgrades.
-		EnsureGlobalPullSecret(t, t.Context(), h.client, hostedCluster)
+	// Run EnsureGlobalPullSecret at the end to avoid interference with upgrade/MCE/NTO/Autoscaling tests.
+	// This test modifies /var/lib/kubelet/config.json and can cause disk validation failures in upgrades.
+	h.Run("EnsureGlobalPullSecret", func(t *testing.T) {
+		EnsureGlobalPullSecret(t, context.Background(), h.client, hostedCluster)
 	})
 }
 
