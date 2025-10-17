@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/openshift/hypershift/control-plane-operator/hostedclusterconfigoperator/controllers/resources/manifests"
 	"github.com/openshift/hypershift/support/thirdparty/kubernetes/pkg/credentialprovider"
@@ -51,9 +52,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req crreconcile.Request) (cr
 
 // reconcileGlobalPullSecret reconciles the original pull secret given by HCP and merges it with a new pull secret provided by the user.
 // The new pull secret is only stored in the DataPlane side so, it's not exposed in the API. It lives in the kube-system namespace of the DataPlane.
-// - If that PS is created, the HCCO deploys a DaemonSet which mounts the node's kubeconfig's file, and merges the new PS with the original one.
-// - If the PS doesn't exist, the HCCO doesn't do anything.
-// - If at some point the user deletes the additional pull secret, the daemonSet will not be removed
+// - If that PS is created, the HCCO deploys a DaemonSet which configures CRIO to use the merged pull secret via global_auth_file configuration.
+//   This approach avoids conflicts with machineConfigOperator during upgrades by not modifying kubelet config directly.
+// - If the PS doesn't exist, the HCCO ensures CRIO uses the original pull secret configuration.
+// - If at some point the user deletes the additional pull secret, the daemonSet will reconfigure CRIO to use only the original pull secret.
 func (r *Reconciler) reconcileGlobalPullSecret(ctx context.Context) error {
 	var (
 		userProvidedPullSecretBytes []byte
@@ -213,6 +215,14 @@ func reconcileDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, origin
 										MountPath: "/etc/original-pull-secret",
 										ReadOnly:  true,
 									},
+									{
+										Name:      "crio-config",
+										MountPath: "/etc/crio",
+									},
+									{
+										Name:      "hypershift-config",
+										MountPath: "/etc/hypershift",
+									},
 								}
 								if globalPullSecretName != "" {
 									volumeMounts = append(volumeMounts, corev1.VolumeMount{
@@ -257,6 +267,24 @@ func reconcileDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, origin
 								VolumeSource: corev1.VolumeSource{
 									Secret: &corev1.SecretVolumeSource{
 										SecretName: originalPullSecretName,
+									},
+								},
+							},
+							{
+								Name: "crio-config",
+								VolumeSource: corev1.VolumeSource{
+									HostPath: &corev1.HostPathVolumeSource{
+										Path: "/etc/crio",
+										Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+									},
+								},
+							},
+							{
+								Name: "hypershift-config",
+								VolumeSource: corev1.VolumeSource{
+									HostPath: &corev1.HostPathVolumeSource{
+										Path: "/etc/hypershift",
+										Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 									},
 								},
 							},
@@ -319,7 +347,6 @@ func mergePullSecrets(ctx context.Context, originalPullSecret, userProvidedPullS
 	var (
 		originalAuths         map[string]any
 		userProvidedAuths     map[string]any
-		finalAuths            map[string]any
 		originalJSON          map[string]any
 		userProvidedJSON      map[string]any
 		globalPullSecretBytes []byte
@@ -339,23 +366,41 @@ func mergePullSecrets(ctx context.Context, originalPullSecret, userProvidedPullS
 	}
 	userProvidedAuths = userProvidedJSON["auths"].(map[string]any)
 
+	// Create ordered JSON manually to ensure additional registries appear first
+	var jsonBuilder strings.Builder
+	jsonBuilder.WriteString(`{"auths":{`)
+
+	isFirst := true
+
+	// Add additional pull secret registries first (only non-conflicting ones)
+	for k, v := range userProvidedAuths {
+		if _, hasConflict := originalAuths[k]; hasConflict {
+			// Skip for now, will add original version later
+			continue
+		}
+		if !isFirst {
+			jsonBuilder.WriteString(",")
+		}
+		auth := v.(map[string]any)["auth"].(string)
+		jsonBuilder.WriteString(`"` + k + `":{"auth":"` + auth + `"}`)
+		isFirst = false
+	}
+
+	// Add all original pull secret registries
 	for k, v := range originalAuths {
-		if _, ok := userProvidedAuths[k]; ok {
+		if _, existsInAdditional := userProvidedAuths[k]; existsInAdditional {
 			log.Info("The registry provided in the additional-pull-secret secret already exists in the original pull secret, this is not allowed. Keeping the original pull secret registry authentication", "registry", k)
 		}
-		userProvidedAuths[k] = v
+		if !isFirst {
+			jsonBuilder.WriteString(",")
+		}
+		auth := v.(map[string]any)["auth"].(string)
+		jsonBuilder.WriteString(`"` + k + `":{"auth":"` + auth + `"}`)
+		isFirst = false
 	}
-	finalAuths = userProvidedAuths
 
-	// Create final JSON
-	finalJSON := map[string]any{
-		"auths": finalAuths,
-	}
-
-	globalPullSecretBytes, err = json.Marshal(finalJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal merged pull secret: %w", err)
-	}
+	jsonBuilder.WriteString(`}}`)
+	globalPullSecretBytes = []byte(jsonBuilder.String())
 
 	return globalPullSecretBytes, nil
 }

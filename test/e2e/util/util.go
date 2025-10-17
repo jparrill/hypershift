@@ -1789,28 +1789,20 @@ func EnsureGuestWebhooksValidated(t *testing.T, ctx context.Context, guestClient
 }
 
 func EnsureGlobalPullSecret(t *testing.T, ctx context.Context, mgmtClient crclient.Client, entryHostedCluster *hyperv1.HostedCluster) {
-	AtLeast(t, Version419)
+	//AtLeast(t, Version419)
 	// TODO (jparrill): Change check of release version `releaseVersion.GT(Version420)` to `releaseVersion.GE(Version420)`
 	// during the backport to 4.20 of this PR https://github.com/openshift/hypershift/pull/6736
-	if entryHostedCluster.Spec.Platform.Type != hyperv1.AzurePlatform && entryHostedCluster.Spec.Platform.Type != hyperv1.AWSPlatform {
-		t.Skip("test only supported on platform ARO or AWS")
-	}
+	//if entryHostedCluster.Spec.Platform.Type != hyperv1.AzurePlatform && entryHostedCluster.Spec.Platform.Type != hyperv1.AWSPlatform {
+	//	t.Skip("test only supported on platform ARO or AWS")
+	//}
 
-	if entryHostedCluster.Spec.Platform.Type == hyperv1.AWSPlatform && releaseVersion.LE(Version420) {
-		t.Skip("AWS platform not supported on version 4.20 or less")
-	}
+	//if entryHostedCluster.Spec.Platform.Type == hyperv1.AWSPlatform && releaseVersion.LE(Version420) {
+	//	t.Skip("AWS platform not supported on version 4.20 or less")
+	//}
 
-	if !util.IsPublicHC(entryHostedCluster) {
-		t.Skip("test only supported on public clusters")
-	}
-
-	// Skip this test if the parent test is TestAutoscaling, TestNodePool, or TestUpgrade to avoid parallelism issues.
-	// During autoscaling tests, nodes are dynamically created/destroyed which prevents
-	// the global-pull-secret-syncer DaemonSet from reaching a stable state across all nodes.
-	// This causes timeouts and failures in GlobalPullSecret synchronization.
-	if strings.Contains(t.Name(), "TestAutoscaling") || strings.Contains(t.Name(), "TestNodePool") || strings.Contains(t.Name(), "TestUpgrade") {
-		t.Skip("EnsureGlobalPullSecret is skipped when parent test is TestAutoscaling, TestNodePool, or TestUpgrade to avoid node scaling conflicts")
-	}
+	//if !util.IsPublicHC(entryHostedCluster) {
+	//	t.Skip("test only supported on public clusters")
+	//}
 
 	var (
 		dummyImageTagMultiarch = "quay.io/hypershift/sleep:multiarch"
@@ -1831,7 +1823,7 @@ func EnsureGlobalPullSecret(t *testing.T, ctx context.Context, mgmtClient crclie
 
 	// Get NodePool List
 	npList := &hyperv1.NodePoolList{}
-	err = guestClient.List(ctx, npList, crclient.InNamespace(entryHostedCluster.Namespace))
+	err = mgmtClient.List(ctx, npList, crclient.InNamespace(entryHostedCluster.Namespace))
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			t.Skip("NodePool is not found, skipping EnsureGlobalPullSecret test")
@@ -1841,7 +1833,7 @@ func EnsureGlobalPullSecret(t *testing.T, ctx context.Context, mgmtClient crclie
 
 	// Get the first NodePool
 	np := &hyperv1.NodePool{}
-	err = guestClient.Get(ctx, client.ObjectKey{Name: npList.Items[0].Name, Namespace: npList.Items[0].Namespace}, np)
+	err = mgmtClient.Get(ctx, client.ObjectKey{Name: npList.Items[0].Name, Namespace: npList.Items[0].Namespace}, np)
 	g.Expect(err).NotTo(HaveOccurred(), "failed to get NodePool")
 	g.Expect(np.Spec.Replicas).NotTo(BeNil(), "NodePool replicas are not set")
 	nodeCount := *np.Spec.Replicas
@@ -1918,6 +1910,29 @@ func EnsureGlobalPullSecret(t *testing.T, ctx context.Context, mgmtClient crclie
 		WaitForNReadyNodes(t, ctx, guestClient, nodeCount, np.Spec.Platform.Type)
 	})
 
+	// Wait for GlobalPullSecretDaemonSet to propagate the updated pull secret to all nodes
+	t.Run("Wait for pull secret synchronization to propagate across all nodes", func(t *testing.T) {
+		t.Log("Waiting for GlobalPullSecretDaemonSet to process the updated pull secret and stabilize all nodes")
+
+		// Wait for the GlobalPullSecretDaemonSet to be ready and stable after processing the update
+		EventuallyObject(t, ctx, "GlobalPullSecretDaemonSet to be ready after global-pull-secret update", func(ctx context.Context) (*appsv1.DaemonSet, error) {
+			ds := hccomanifests.GlobalPullSecretDaemonSet()
+			err := guestClient.Get(ctx, crclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, ds)
+			return ds, err
+		}, []Predicate[*appsv1.DaemonSet]{func(ds *appsv1.DaemonSet) (done bool, reasons string, err error) {
+			if ds.Status.ObservedGeneration < ds.Generation {
+				return false, fmt.Sprintf("DaemonSet status has not observed generation %d yet (current %d)", ds.Generation, ds.Status.ObservedGeneration), nil
+			}
+			if ds.Status.UpdatedNumberScheduled != ds.Status.DesiredNumberScheduled {
+				return false, fmt.Sprintf("DaemonSet update in flight: %d/%d pods updated", ds.Status.UpdatedNumberScheduled, ds.Status.DesiredNumberScheduled), nil
+			}
+			if ds.Status.NumberReady != ds.Status.DesiredNumberScheduled {
+				return false, fmt.Sprintf("DaemonSet not ready: %d/%d pods ready", ds.Status.NumberReady, ds.Status.DesiredNumberScheduled), nil
+			}
+			return true, fmt.Sprintf("DaemonSet ready: %d/%d pods", ds.Status.NumberReady, ds.Status.DesiredNumberScheduled), nil
+		}}, WithTimeout(5*time.Minute), WithInterval(10*time.Second))
+	})
+
 	// Check if we can run a pod with the restricted image
 	t.Run("Create a pod which uses the restricted image, should succeed", func(t *testing.T) {
 		shouldFail := false
@@ -1966,9 +1981,9 @@ func EnsureGlobalPullSecret(t *testing.T, ctx context.Context, mgmtClient crclie
 		}}, WithTimeout(5*time.Minute), WithInterval(10*time.Second))
 	})
 
-	// Check if the config.json is updated in all of the nodes
-	t.Run("Check if the config.json is correct in all of the nodes", func(t *testing.T) {
-		VerifyKubeletConfigWithDaemonSet(t, ctx, guestClient, dsImage)
+	// Check if the CRI-O configuration is correctly updated in all of the nodes
+	t.Run("Check if the CRI-O configuration is correct in all of the nodes", func(t *testing.T) {
+		VerifyCRIOConfigWithDaemonSet(t, ctx, guestClient, dsImage)
 	})
 }
 

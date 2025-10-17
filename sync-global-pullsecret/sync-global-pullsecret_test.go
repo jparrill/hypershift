@@ -1,6 +1,8 @@
 package syncglobalpullsecret
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,141 +14,51 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func TestCheckAndFixFile(t *testing.T) {
+func TestDecidePullSecretStrategy(t *testing.T) {
 	tests := []struct {
-		name                  string
-		initialContent        string
-		secretContent         string
-		rollbackShouldFail    bool
-		expectedErrorContains []string
-		expectedFinalContent  string
-		expectError           bool
-		description           string
+		name                      string
+		globalPullSecretExists    bool
+		globalPullSecretContent   string
+		originalPullSecretContent string
+		expectedUseGlobal         bool
+		expectedError             bool
+		description               string
 	}{
 		{
-			name:               "file does not exist",
-			description:        "file does not exist, kubelet restart fails, rollback succeeds",
-			initialContent:     "",
-			secretContent:      `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			rollbackShouldFail: false,
-			expectedErrorContains: []string{
-				"failed to restart kubelet after 3 attempts",
-				"rolled back changes",
-			},
-			expectedFinalContent: "",
-			expectError:          true,
+			name:                      "global pull secret does not exist",
+			description:               "when global pull secret file doesn't exist, should use original",
+			globalPullSecretExists:    false,
+			globalPullSecretContent:   "",
+			originalPullSecretContent: generatePullSecretWithAuth("registry.redhat.io", "test:test"),
+			expectedUseGlobal:         false,
+			expectedError:             false,
 		},
 		{
-			name:               "file exists with different content",
-			description:        "file exists with different content, kubelet restart fails, rollback succeeds",
-			initialContent:     `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			secretContent:      `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			rollbackShouldFail: false,
-			expectedErrorContains: []string{
-				"failed to restart kubelet after 3 attempts",
-				"rolled back changes",
-			},
-			expectedFinalContent: `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			expectError:          true,
+			name:                      "global pull secret exists and has content",
+			description:               "when global pull secret exists with content, should use global",
+			globalPullSecretExists:    true,
+			globalPullSecretContent:   generatePullSecretWithMultipleAuths(map[string]string{"registry.redhat.io": "test:test", "quay.io": "another:auth"}),
+			originalPullSecretContent: generatePullSecretWithAuth("registry.redhat.io", "test:test"),
+			expectedUseGlobal:         true,
+			expectedError:             false,
 		},
 		{
-			name:                  "file exists with same content",
-			description:           "file exists with same content, no changes needed",
-			initialContent:        `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			secretContent:         `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			rollbackShouldFail:    false,
-			expectedErrorContains: []string{},
-			expectedFinalContent:  `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			expectError:           false,
+			name:                      "global pull secret exists but is empty",
+			description:               "when global pull secret exists but is empty, should use original",
+			globalPullSecretExists:    true,
+			globalPullSecretContent:   "",
+			originalPullSecretContent: generatePullSecretWithAuth("registry.redhat.io", "test:test"),
+			expectedUseGlobal:         false,
+			expectedError:             false,
 		},
 		{
-			name:               "rollback succeeds",
-			description:        "kubelet restart fails but rollback succeeds, file should be restored to original content",
-			initialContent:     `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			secretContent:      `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			rollbackShouldFail: false,
-			expectedErrorContains: []string{
-				"failed to restart kubelet after 3 attempts",
-				"rolled back changes",
-			},
-			expectedFinalContent: `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			expectError:          true,
-		},
-		{
-			name:               "rollback fails",
-			description:        "both kubelet restart and rollback fail, file should remain with new content",
-			initialContent:     `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			secretContent:      `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			rollbackShouldFail: true,
-			expectedErrorContains: []string{
-				"2 errors happened",
-				"the kubelet restart failed after 3 attempts",
-				"it failed to rollback the file",
-			},
-			expectedFinalContent: `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			expectError:          true,
-		},
-		{
-			name:               "preserve trailing newline when original file has one",
-			description:        "file has trailing newline, new content doesn't, should preserve newline",
-			initialContent:     "{\"auths\":{\"old.registry.com\":{\"auth\":\"b2xkOnRlc3Q=\"}}}\n",
-			secretContent:      `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			rollbackShouldFail: false,
-			expectedErrorContains: []string{
-				"failed to restart kubelet after 3 attempts",
-				"rolled back changes",
-			},
-			expectedFinalContent: "{\"auths\":{\"old.registry.com\":{\"auth\":\"b2xkOnRlc3Q=\"}}}\n",
-			expectError:          true,
-		},
-		{
-			name:               "preserve single newline when both have newlines",
-			description:        "both original file and new content have trailing newlines, should preserve single newline",
-			initialContent:     "{\"auths\":{\"old.registry.com\":{\"auth\":\"b2xkOnRlc3Q=\"}}}\n",
-			secretContent:      "{\"auths\":{\"test.registry.com\":{\"auth\":\"dGVzdDp0ZXN0\"}}}\n",
-			rollbackShouldFail: false,
-			expectedErrorContains: []string{
-				"failed to restart kubelet after 3 attempts",
-				"rolled back changes",
-			},
-			expectedFinalContent: "{\"auths\":{\"old.registry.com\":{\"auth\":\"b2xkOnRlc3Q=\"}}}\n",
-			expectError:          true,
-		},
-		{
-			name:               "no newline when original file has none",
-			description:        "original file has no newline, new content has newline, should preserve new content format",
-			initialContent:     `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			secretContent:      "{\"auths\":{\"test.registry.com\":{\"auth\":\"dGVzdDp0ZXN0\"}}}\n",
-			rollbackShouldFail: false,
-			expectedErrorContains: []string{
-				"failed to restart kubelet after 3 attempts",
-				"rolled back changes",
-			},
-			expectedFinalContent: `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			expectError:          true,
-		},
-		{
-			name:               "no newlines preserved",
-			description:        "neither original file nor new content have newlines, should preserve format",
-			initialContent:     `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			secretContent:      `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			rollbackShouldFail: false,
-			expectedErrorContains: []string{
-				"failed to restart kubelet after 3 attempts",
-				"rolled back changes",
-			},
-			expectedFinalContent: `{"auths":{"old.registry.com":{"auth":"b2xkOnRlc3Q="}}}`,
-			expectError:          true,
-		},
-		{
-			name:                  "same content with newline - no change needed",
-			description:           "file content is identical including newline, no restart should be attempted",
-			initialContent:        "{\"auths\":{\"test.registry.com\":{\"auth\":\"dGVzdDp0ZXN0\"}}}\n",
-			secretContent:         `{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`,
-			rollbackShouldFail:    false,
-			expectedErrorContains: []string{},
-			expectedFinalContent:  "{\"auths\":{\"test.registry.com\":{\"auth\":\"dGVzdDp0ZXN0\"}}}\n",
-			expectError:           false,
+			name:                      "global pull secret exists but is invalid",
+			description:               "when global pull secret exists but is invalid JSON, should use original",
+			globalPullSecretExists:    true,
+			globalPullSecretContent:   `invalid json`,
+			originalPullSecretContent: generatePullSecretWithAuth("registry.redhat.io", "test:test"),
+			expectedUseGlobal:         false,
+			expectedError:             false,
 		},
 	}
 
@@ -159,70 +71,194 @@ func TestCheckAndFixFile(t *testing.T) {
 			g.Expect(err).To(BeNil())
 			defer os.RemoveAll(tempDir)
 
-			// Create test file path
-			testFilePath := filepath.Join(tempDir, "config.json")
+			// Create temporary directories
+			originalSecretDir := filepath.Join(tempDir, "original-pull-secret")
+			globalSecretDir := filepath.Join(tempDir, "global-pull-secret")
 
-			// Write initial content if provided
-			if tt.initialContent != "" {
-				err = os.WriteFile(testFilePath, []byte(tt.initialContent), 0600)
-				g.Expect(err).To(BeNil())
-			}
+			err = os.MkdirAll(originalSecretDir, 0755)
+			g.Expect(err).To(BeNil())
+			err = os.MkdirAll(globalSecretDir, 0755)
+			g.Expect(err).To(BeNil())
 
-			// Verify initial content if file exists
-			if tt.initialContent != "" {
-				content, err := os.ReadFile(testFilePath)
+			// Create original pull secret file
+			originalSecretFile := filepath.Join(originalSecretDir, ".dockerconfigjson")
+			err = os.WriteFile(originalSecretFile, []byte(tt.originalPullSecretContent), 0600)
+			g.Expect(err).To(BeNil())
+
+			// Create global pull secret file if it should exist
+			globalSecretFile := filepath.Join(globalSecretDir, ".dockerconfigjson")
+			if tt.globalPullSecretExists {
+				err = os.WriteFile(globalSecretFile, []byte(tt.globalPullSecretContent), 0600)
 				g.Expect(err).To(BeNil())
-				g.Expect(string(content)).To(Equal(tt.initialContent))
 			}
 
 			// Create syncer for testing
 			syncer := &GlobalPullSecretSyncer{
-				kubeletConfigJsonPath: testFilePath,
-				log:                   logr.Discard(),
+				hcpOriginalPullSecretFilePath: originalSecretFile,
+				hcpGlobalPullSecretFilePath:   globalSecretFile,
+				log:                           logr.Discard(),
 			}
 
-			// Save original write function and restore it after test
-			originalWriteFileFunc := writeFileFunc
-			defer func() { writeFileFunc = originalWriteFileFunc }()
-
-			// Set up custom write function for rollback failure scenario
-			if tt.rollbackShouldFail {
-				// Create a custom write function that fails only during rollback
-				writeCount := 0
-				writeFileFunc = func(filename string, data []byte, perm os.FileMode) error {
-					writeCount++
-					// First write (new content) succeeds, second write (rollback) fails
-					if writeCount == 1 {
-						return os.WriteFile(filename, data, perm)
-					}
-					return fmt.Errorf("simulated rollback write failure")
-				}
-			}
-
-			// Run checkAndFixFile
-			err = syncer.checkAndFixFile([]byte(tt.secretContent))
+			// Run decidePullSecretStrategy
+			useGlobal, finalPullSecret, err := syncer.decidePullSecretStrategy()
 
 			// Check error expectations
-			if tt.expectError {
+			if tt.expectedError {
 				g.Expect(err).To(HaveOccurred())
-				for _, expectedError := range tt.expectedErrorContains {
-					g.Expect(err.Error()).To(ContainSubstring(expectedError))
-				}
 			} else {
 				g.Expect(err).To(BeNil())
-			}
+				g.Expect(useGlobal).To(Equal(tt.expectedUseGlobal))
 
-			// Verify final file content
-			if tt.expectedFinalContent != "" {
-				content, err := os.ReadFile(testFilePath)
-				g.Expect(err).To(BeNil())
-				g.Expect(string(content)).To(Equal(tt.expectedFinalContent))
+				// Verify the final pull secret content
+				if tt.expectedUseGlobal {
+					g.Expect(string(finalPullSecret)).To(Equal(tt.globalPullSecretContent))
+				} else {
+					g.Expect(string(finalPullSecret)).To(Equal(tt.originalPullSecretContent))
+				}
 			}
 		})
 	}
 }
 
-func TestRestartKubelet(t *testing.T) {
+func TestConfigureCRIO(t *testing.T) {
+	tests := []struct {
+		name                     string
+		useGlobalPullSecret      bool
+		pullSecretContent        string
+		expectedCRIOConfigExists bool
+		setupExistingFiles       func(string, string) // crioConfigPath, globalSecretPath
+		expectedCRIORestart      bool
+		description              string
+	}{
+		{
+			name:                     "use global pull secret - first time",
+			description:              "when using global pull secret for first time, should create CRIO config and restart",
+			useGlobalPullSecret:      true,
+			pullSecretContent:        generatePullSecretWithAuth("registry.redhat.io", "test:test"),
+			expectedCRIOConfigExists: true,
+			expectedCRIORestart:      true,
+			setupExistingFiles:       func(string, string) {}, // no existing files
+		},
+		{
+			name:                     "use global pull secret - same content",
+			description:              "when using global pull secret with same content, should not restart",
+			useGlobalPullSecret:      true,
+			pullSecretContent:        generatePullSecretWithAuth("registry.redhat.io", "test:test"),
+			expectedCRIOConfigExists: true,
+			expectedCRIORestart:      false,
+			setupExistingFiles: func(crioPath, secretPath string) {
+				// Create existing files with same content
+				os.WriteFile(secretPath, []byte(generatePullSecretWithAuth("registry.redhat.io", "test:test")), 0600)
+				os.WriteFile(crioPath, []byte(`[crio.image]
+global_auth_file = "`+secretPath+`"
+`), 0644)
+			},
+		},
+		{
+			name:                     "use original pull secret - remove existing config",
+			description:              "when switching to original pull secret, should remove CRIO config and restart",
+			useGlobalPullSecret:      false,
+			pullSecretContent:        generatePullSecretWithAuth("registry.redhat.io", "test:test"),
+			expectedCRIOConfigExists: false,
+			expectedCRIORestart:      true,
+			setupExistingFiles: func(crioPath, secretPath string) {
+				// Create existing files to be removed
+				os.WriteFile(secretPath, []byte(generatePullSecretWithAuth("old", "test:old")), 0600)
+				os.WriteFile(crioPath, []byte(`[crio.image]
+global_auth_file = "`+secretPath+`"
+`), 0644)
+			},
+		},
+		{
+			name:                     "use original pull secret - no existing config",
+			description:              "when using original pull secret and no config exists, should not restart",
+			useGlobalPullSecret:      false,
+			pullSecretContent:        generatePullSecretWithAuth("registry.redhat.io", "test:test"),
+			expectedCRIOConfigExists: false,
+			expectedCRIORestart:      false,
+			setupExistingFiles:       func(string, string) {}, // no existing files
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			// Create a temporary directory for test files
+			tempDir, err := os.MkdirTemp("", "sync-pullsecret-test-*")
+			g.Expect(err).To(BeNil())
+			defer os.RemoveAll(tempDir)
+
+			// Create temporary directories for CRIO and hypershift config
+			crioDir := filepath.Join(tempDir, "crio", "crio.conf.d")
+			hypershiftDir := filepath.Join(tempDir, "hypershift")
+
+			err = os.MkdirAll(crioDir, 0755)
+			g.Expect(err).To(BeNil())
+			err = os.MkdirAll(hypershiftDir, 0755)
+			g.Expect(err).To(BeNil())
+
+			crioConfigPath := filepath.Join(crioDir, "99-global-pull-secret.conf")
+			globalSecretPath := filepath.Join(hypershiftDir, "global-pull-secret.json")
+
+			// Setup existing files if needed
+			tt.setupExistingFiles(crioConfigPath, globalSecretPath)
+
+			// Track if CRIO restart was called
+			crioRestartCalled := false
+
+			// Create syncer for testing with test-specific paths
+			syncer := &GlobalPullSecretSyncer{
+				crioGlobalPullSecretConfigPath: crioConfigPath,
+				globalPullSecretPath:           globalSecretPath,
+				log:                            logr.Discard(),
+				signalDBUSToRestartCrioFunc: func() error {
+					crioRestartCalled = true
+					return nil
+				},
+			}
+
+			// Run configureCRIO
+			err = syncer.configureCRIO(tt.useGlobalPullSecret, []byte(tt.pullSecretContent))
+			g.Expect(err).To(BeNil())
+
+			// Verify if CRIO restart was called as expected
+			g.Expect(crioRestartCalled).To(Equal(tt.expectedCRIORestart),
+				"CRIO restart expectation mismatch: expected %v, got %v", tt.expectedCRIORestart, crioRestartCalled)
+
+			// Check if CRIO config file exists as expected
+			_, err = os.Stat(syncer.crioGlobalPullSecretConfigPath)
+			if tt.expectedCRIOConfigExists {
+				g.Expect(err).To(BeNil(), "CRIO config file should exist")
+
+				// Verify the content of CRIO config file
+				content, err := os.ReadFile(syncer.crioGlobalPullSecretConfigPath)
+				g.Expect(err).To(BeNil())
+				expectedConfig := fmt.Sprintf(`[crio.image]
+global_auth_file = "%s"
+`, syncer.globalPullSecretPath)
+				g.Expect(string(content)).To(Equal(expectedConfig))
+
+				// Verify global pull secret file exists
+				_, err = os.Stat(syncer.globalPullSecretPath)
+				g.Expect(err).To(BeNil(), "Global pull secret file should exist")
+
+				// Verify global pull secret content
+				secretContent, err := os.ReadFile(syncer.globalPullSecretPath)
+				g.Expect(err).To(BeNil())
+				g.Expect(string(secretContent)).To(Equal(tt.pullSecretContent))
+			} else {
+				g.Expect(os.IsNotExist(err)).To(BeTrue(), "CRIO config file should not exist")
+
+				// Verify global pull secret file is also removed
+				_, err = os.Stat(syncer.globalPullSecretPath)
+				g.Expect(os.IsNotExist(err)).To(BeTrue(), "Global pull secret file should not exist")
+			}
+		})
+	}
+}
+
+func TestRestartSystemdUnit(t *testing.T) {
 	tests := []struct {
 		name          string
 		setupMock     func(*MockdbusConn)
@@ -249,7 +285,7 @@ func TestRestartKubelet(t *testing.T) {
 					RestartUnit(gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(0, fmt.Errorf("dbus error"))
 			},
-			expectedError: "failed to restart kubelet: dbus error",
+			expectedError: "failed to restart kubelet.service: dbus error",
 			description:   "dbus call itself failed",
 		},
 		{
@@ -262,7 +298,7 @@ func TestRestartKubelet(t *testing.T) {
 						return 0, nil
 					})
 			},
-			expectedError: "failed to restart kubelet, result: failed",
+			expectedError: "failed to restart kubelet.service, result: failed",
 			description:   "systemd job failed",
 		},
 		{
@@ -275,7 +311,7 @@ func TestRestartKubelet(t *testing.T) {
 						return 0, nil
 					})
 			},
-			expectedError: "failed to restart kubelet, result: timeout",
+			expectedError: "failed to restart kubelet.service, result: timeout",
 			description:   "systemd job timed out",
 		},
 		{
@@ -288,7 +324,7 @@ func TestRestartKubelet(t *testing.T) {
 						return 0, nil
 					})
 			},
-			expectedError: "failed to restart kubelet, result: canceled",
+			expectedError: "failed to restart kubelet.service, result: canceled",
 			description:   "systemd job was canceled",
 		},
 		{
@@ -301,7 +337,7 @@ func TestRestartKubelet(t *testing.T) {
 						return 0, nil
 					})
 			},
-			expectedError: "failed to restart kubelet, result: dependency",
+			expectedError: "failed to restart kubelet.service, result: dependency",
 			description:   "systemd job dependency failed",
 		},
 		{
@@ -314,7 +350,7 @@ func TestRestartKubelet(t *testing.T) {
 						return 0, nil
 					})
 			},
-			expectedError: "failed to restart kubelet, result: skipped",
+			expectedError: "failed to restart kubelet.service, result: skipped",
 			description:   "systemd job was skipped",
 		},
 	}
@@ -327,7 +363,7 @@ func TestRestartKubelet(t *testing.T) {
 			mock := NewMockdbusConn(ctrl)
 			tt.setupMock(mock)
 
-			err := restartKubelet(mock)
+			err := restartSystemdUnit(mock, kubeletServiceUnit)
 			if err != nil {
 				if tt.expectedError == "" {
 					t.Errorf("unexpected error: %v", err)
@@ -350,13 +386,13 @@ func TestValidateDockerConfigJSON(t *testing.T) {
 	}{
 		{
 			name:        "valid docker config with single auth",
-			input:       []byte(`{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`),
+			input:       []byte(generatePullSecretWithAuth("test.registry.com", "test:test")),
 			expectError: false,
 			description: "valid JSON with auths key containing single registry",
 		},
 		{
 			name:        "valid docker config with multiple auths",
-			input:       []byte(`{"auths":{"registry1.com":{"auth":"dGVzdDp0ZXN0"},"registry2.com":{"auth":"YW5vdGhlcjphdXRo"}}}`),
+			input:       []byte(generatePullSecretWithMultipleAuths(map[string]string{"registry1.com": "test:test", "registry2.com": "another:auth"})),
 			expectError: false,
 			description: "valid JSON with auths key containing multiple registries",
 		},
@@ -368,31 +404,31 @@ func TestValidateDockerConfigJSON(t *testing.T) {
 		},
 		{
 			name:        "valid docker config with additional fields",
-			input:       []byte(`{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}},"credsStore":"desktop","credHelpers":{"registry.com":"registry-helper"}}`),
+			input:       []byte(`{"auths":{"test.registry.com":{"auth":"` + base64.StdEncoding.EncodeToString([]byte("test:test")) + `"}},"credsStore":"desktop","credHelpers":{"registry.com":"registry-helper"}}`),
 			expectError: false,
 			description: "valid JSON with auths key and additional docker config fields",
 		},
 		{
 			name:        "invalid JSON - malformed",
-			input:       []byte(`{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}`),
+			input:       []byte(`{"auths":{"test.registry.com":{"auth":"` + base64.StdEncoding.EncodeToString([]byte("test:test")) + `"}`),
 			expectError: true,
 			description: "malformed JSON missing closing brace",
 		},
 		{
 			name:        "invalid JSON - trailing comma",
-			input:       []byte(`{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}},}`),
+			input:       []byte(`{"auths":{"test.registry.com":{"auth":"` + base64.StdEncoding.EncodeToString([]byte("test:test")) + `"}},}`),
 			expectError: true,
 			description: "malformed JSON with trailing comma",
 		},
 		{
 			name:        "invalid JSON - unquoted key",
-			input:       []byte(`{auths:{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`),
+			input:       []byte(`{auths:{"test.registry.com":{"auth":"` + base64.StdEncoding.EncodeToString([]byte("test:test")) + `"}}}`),
 			expectError: true,
 			description: "malformed JSON with unquoted key",
 		},
 		{
 			name:        "missing auths key",
-			input:       []byte(`{"registries":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}`),
+			input:       []byte(`{"registries":{"test.registry.com":{"auth":"` + base64.StdEncoding.EncodeToString([]byte("test:test")) + `"}}}`),
 			expectError: true,
 			description: "valid JSON but missing required auths key",
 		},
@@ -416,7 +452,7 @@ func TestValidateDockerConfigJSON(t *testing.T) {
 		},
 		{
 			name:        "array input",
-			input:       []byte(`[{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}]`),
+			input:       []byte(`[{"auths":{"test.registry.com":{"auth":"` + base64.StdEncoding.EncodeToString([]byte("test:test")) + `"}}}]`),
 			expectError: true,
 			description: "array JSON value should fail validation",
 		},
@@ -464,7 +500,7 @@ func TestValidateDockerConfigJSON(t *testing.T) {
 		},
 		{
 			name:        "nested auths key",
-			input:       []byte(`{"config":{"auths":{"test.registry.com":{"auth":"dGVzdDp0ZXN0"}}}}`),
+			input:       []byte(`{"config":{"auths":{"test.registry.com":{"auth":"` + base64.StdEncoding.EncodeToString([]byte("test:test")) + `"}}}}`),
 			expectError: true,
 			description: "auths key nested inside another object should fail validation",
 		},
@@ -483,4 +519,41 @@ func TestValidateDockerConfigJSON(t *testing.T) {
 			}
 		})
 	}
+}
+
+// generatePullSecretWithAuth generates a pull secret JSON with dynamic base64 auth for a given registry.
+// authString should be in format "username:password"
+func generatePullSecretWithAuth(registry, authString string) string {
+	authBase64 := base64.StdEncoding.EncodeToString([]byte(authString))
+
+	pullSecret := map[string]interface{}{
+		"auths": map[string]interface{}{
+			registry: map[string]interface{}{
+				"auth": authBase64,
+			},
+		},
+	}
+
+	jsonBytes, _ := json.Marshal(pullSecret)
+	return string(jsonBytes)
+}
+
+// generatePullSecretWithMultipleAuths generates a pull secret JSON with multiple registries and dynamic base64 auth.
+// auths is a map of registry -> "username:password"
+func generatePullSecretWithMultipleAuths(auths map[string]string) string {
+	authsMap := make(map[string]interface{})
+
+	for registry, authString := range auths {
+		authBase64 := base64.StdEncoding.EncodeToString([]byte(authString))
+		authsMap[registry] = map[string]interface{}{
+			"auth": authBase64,
+		}
+	}
+
+	pullSecret := map[string]interface{}{
+		"auths": authsMap,
+	}
+
+	jsonBytes, _ := json.Marshal(pullSecret)
+	return string(jsonBytes)
 }

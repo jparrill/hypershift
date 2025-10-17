@@ -1,10 +1,10 @@
 package syncglobalpullsecret
 
 // sync-global-pullsecret syncs the pull secret from the user provided pull secret in DataPlane and appends it to the HostedCluster PullSecret to be deployed in the nodes of the HostedCluster.
+// It uses CRIO's global_global_auth_file configuration strategy instead of directly modifying kubelet config to avoid conflicts with machineConfigOperator during upgrades.
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,11 +18,13 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/openshift/hypershift/sync-global-pullsecret/manifests"
 )
 
 // syncGlobalPullSecretOptions contains the configuration options for the sync-global-pullsecret command
 type syncGlobalPullSecretOptions struct {
-	kubeletConfigJsonPath string
+	// No configuration options needed - CRIO configuration paths are fixed
 }
 
 //go:generate ../hack/tools/bin/mockgen -destination=sync-global-pullsecret_mock.go -package=syncglobalpullsecret . dbusConn
@@ -31,20 +33,37 @@ type dbusConn interface {
 	Close()
 }
 
-// GlobalPullSecretSyncer handles the synchronization of pull secrets
+// GlobalPullSecretSyncer handles the synchronization of pull secrets using CRIO global_auth_file configuration.
+// This approach configures CRIO to use custom authentication files instead of modifying kubelet config,
+// which avoids conflicts with machineConfigOperator during cluster upgrades.
 type GlobalPullSecretSyncer struct {
-	kubeletConfigJsonPath string
-	log                   logr.Logger
+	// crioGlobalPullSecretConfigPath is the path to the CRIO drop-in config file that sets global_auth_file
+	crioGlobalPullSecretConfigPath string
+	// globalPullSecretPath is the path where the merged pull secret is written for CRIO to use
+	globalPullSecretPath string
+	// hcpOriginalPullSecretFilePath is the path to the original pull secret from HostedControlPlane
+	hcpOriginalPullSecretFilePath string
+	// hcpGlobalPullSecretFilePath is the path to the global pull secret from HostedControlPlane
+	hcpGlobalPullSecretFilePath string
+	// signalDBUSToRestartCrioFunc is the function used to restart CRIO when configuration changes
+	signalDBUSToRestartCrioFunc func() error
+	log                         logr.Logger
 }
 
 const (
-	defaultKubeletConfigJsonPath = "/var/lib/kubelet/config.json"
-	dbusRestartUnitMode          = "replace"
-	kubeletServiceUnit           = "kubelet.service"
+	dbusRestartUnitMode = "replace"
+	kubeletServiceUnit  = "kubelet.service"
+	crioServiceUnit     = "crio.service"
 
-	// Mounted secret file paths
-	originalPullSecretFilePath = "/etc/original-pull-secret/.dockerconfigjson"
-	globalPullSecretFilePath   = "/etc/global-pull-secret/.dockerconfigjson"
+	// Default mounted secret file paths from the DaemonSet volumes
+	defaultHcpOriginalPullSecretFilePath = "/etc/original-pull-secret/.dockerconfigjson"
+	defaultHcpGlobalPullSecretFilePath   = "/etc/global-pull-secret/.dockerconfigjson"
+
+	// CRIO configuration strategy paths:
+	// - CRIO drop-in config file that sets global_auth_file directive
+	defaultCrioGlobalPullSecretConfigPath = "/etc/crio/crio.conf.d/99-global-pull-secret.conf"
+	// - Path where the merged pull secret is written for CRIO to use
+	defaultGlobalPullSecretPath = "/etc/hypershift/global-pull-secret.json"
 
 	tickerPace = 30 * time.Second
 
@@ -67,12 +86,10 @@ func NewRunCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync-global-pullsecret",
 		Short: "Syncs a mixture between the user original pull secret in DataPlane and the HostedCluster PullSecret to be deployed in the nodes of the HostedCluster",
-		Long:  `Syncs a mixture between the user original pull secret in DataPlane and the HostedCluster PullSecret to be deployed in the nodes of the HostedCluster. The resulting pull secret is deployed in a DaemonSet in the DataPlane that updates the kubelet.config.json file with the new pull secret. If there are conflicting entries in the resulting global pull secret, the original pull secret entries will prevail to ensure the well functioning of the nodes.`,
+		Long:  `Syncs a mixture between the user original pull secret in DataPlane and the HostedCluster PullSecret to be deployed in the nodes of the HostedCluster. The resulting pull secret is deployed in a DaemonSet in the DataPlane that configures CRIO to use the appropriate authentication via global_auth_file configuration. This approach avoids conflicts with machineConfigOperator during upgrades. If there are conflicting entries in the resulting global pull secret, the original pull secret entries will prevail to ensure the well functioning of the nodes.`,
 	}
 
-	opts := syncGlobalPullSecretOptions{
-		kubeletConfigJsonPath: defaultKubeletConfigJsonPath,
-	}
+	opts := syncGlobalPullSecretOptions{}
 	cmd.Run = func(cmd *cobra.Command, args []string) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -108,8 +125,12 @@ func (o *syncGlobalPullSecretOptions) run(ctx context.Context) error {
 
 	// Create syncer
 	syncer := &GlobalPullSecretSyncer{
-		kubeletConfigJsonPath: o.kubeletConfigJsonPath,
-		log:                   logger,
+		crioGlobalPullSecretConfigPath: defaultCrioGlobalPullSecretConfigPath,
+		globalPullSecretPath:           defaultGlobalPullSecretPath,
+		hcpOriginalPullSecretFilePath:  defaultHcpOriginalPullSecretFilePath,
+		hcpGlobalPullSecretFilePath:    defaultHcpGlobalPullSecretFilePath,
+		signalDBUSToRestartCrioFunc:    signalDBUSToRestartCrio,
+		log:                            logger,
 	}
 
 	// Start the sync loop
@@ -121,7 +142,7 @@ func (s *GlobalPullSecretSyncer) runSyncLoop(ctx context.Context) error {
 	s.log.Info("Starting global pull secret sync loop")
 
 	// Initial sync
-	if err := s.syncPullSecret(); err != nil {
+	if err := s.globalPullSecret(); err != nil {
 		s.log.Error(err, "Initial sync failed")
 	}
 
@@ -135,7 +156,7 @@ func (s *GlobalPullSecretSyncer) runSyncLoop(ctx context.Context) error {
 			s.log.Info("Context canceled, stopping sync loop")
 			return nil
 		case <-ticker.C:
-			if err := s.syncPullSecret(); err != nil {
+			if err := s.globalPullSecret(); err != nil {
 				s.log.Error(err, "Sync failed")
 				// Continue the loop even if sync fails
 			}
@@ -143,175 +164,188 @@ func (s *GlobalPullSecretSyncer) runSyncLoop(ctx context.Context) error {
 	}
 }
 
-// syncPullSecret handles the synchronization logic for the GlobalPullSecret
-func (s *GlobalPullSecretSyncer) syncPullSecret() error {
-	s.log.Info("Syncing global pull secret")
+// globalPullSecret handles the update logic for the GlobalPullSecret
+// Main loop
+func (s *GlobalPullSecretSyncer) globalPullSecret() error {
+	s.log.Info("Checking global pull secret")
 
-	// Try to read the global pull secret from mounted file first
-	globalPullSecretBytes, err := readPullSecretFromFile(globalPullSecretFilePath)
+	// Step 1: Decide which pull secret to use and whether we need CRIO custom config
+	useGlobalPullSecret, finalPullSecretBytes, err := s.decidePullSecretStrategy()
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to read global pull secret from file: %w", err)
+		return fmt.Errorf("failed to decide pull secret strategy: %w", err)
+	}
+
+	// Step 2: Configure CRIO based on the decision
+	if err := s.configureCRIO(useGlobalPullSecret, finalPullSecretBytes); err != nil {
+		return fmt.Errorf("failed to configure CRIO: %w", err)
+	}
+
+	// Configuration completed successfully - CRIO will handle authentication via global_auth_file
+	// No verification needed since we're not modifying kubelet config directly
+	return nil
+}
+
+// decidePullSecretStrategy determines which pull secret to use and whether CRIO needs custom config
+func (s *GlobalPullSecretSyncer) decidePullSecretStrategy() (useGlobalPullSecret bool, finalPullSecret []byte, err error) {
+	// Always read the original pull secret (we'll need it regardless)
+	originalPullSecretBytes, err := readPullSecretFromFile(s.hcpOriginalPullSecretFilePath)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to read original pull secret: %w", err)
+	}
+
+	// Try to read the global pull secret
+	globalPullSecretBytes, err := readPullSecretFromFile(s.hcpGlobalPullSecretFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Global pull secret file doesn't exist -> use original
+			s.log.Info("Global pull secret file not found, using original pull secret")
+			return false, originalPullSecretBytes, nil
 		}
-		// If global pull secret file doesn't exist, fall back to original pull secret
-		s.log.Info("Global pull secret file not found, using original pull secret")
-		originalPullSecretBytes, err := readPullSecretFromFile(originalPullSecretFilePath)
-		if err != nil {
-			return fmt.Errorf("failed to read original pull secret from file: %w", err)
-		}
-		globalPullSecretBytes = originalPullSecretBytes
+		// Other error reading global pull secret
+		return false, nil, fmt.Errorf("failed to read global pull secret file: %w", err)
+	}
+
+	// Global pull secret file exists, check if it has content
+	if len(globalPullSecretBytes) == 0 {
+		s.log.Info("Global pull secret file is empty, using original pull secret")
+		return false, originalPullSecretBytes, nil
+	}
+
+	// Validate global pull secret format
+	if err := validateDockerConfigJSON(globalPullSecretBytes); err != nil {
+		s.log.Error(err, "Global pull secret has invalid format, falling back to original")
+		return false, originalPullSecretBytes, nil
+	}
+
+	// Global pull secret exists and is valid -> use it
+	s.log.Info("Global pull secret found and valid, using global pull secret")
+	return true, globalPullSecretBytes, nil
+}
+
+// configureCRIO configures CRIO based on whether we're using global pull secret or not.
+// This function implements the CRIO global_auth_file strategy that avoids conflicts with machineConfigOperator:
+// - When useGlobalPullSecret=true: Creates CRIO drop-in config pointing to custom auth file
+// - When useGlobalPullSecret=false: Removes CRIO config to use default kubelet auth
+func (s *GlobalPullSecretSyncer) configureCRIO(useGlobalPullSecret bool, pullSecretBytes []byte) error {
+	if useGlobalPullSecret {
+		s.log.Info("Configuring CRIO to use global pull secret from custom path")
+		return s.enableGlobalPullSecretCRIOConfig(pullSecretBytes)
 	} else {
-		if len(globalPullSecretBytes) == 0 {
-			s.log.Info("Global pull secret file is empty, using original pull secret")
-			originalPullSecretBytes, err := readPullSecretFromFile(originalPullSecretFilePath)
-			if err != nil {
-				return fmt.Errorf("failed to read original pull secret from file: %w", err)
-			}
-			globalPullSecretBytes = originalPullSecretBytes
-		} else {
-			s.log.Info("Global pull secret content found, using it")
-		}
+		s.log.Info("Configuring CRIO to use original pull secret (cleaning up custom config)")
+		return s.disableGlobalPullSecretCRIOConfig()
 	}
-
-	if err := s.checkAndFixFile(globalPullSecretBytes); err != nil {
-		return fmt.Errorf("failed to check and fix file: %w", err)
-	}
-
-	return nil
 }
 
-// checkAndFixFile reads the current file content and updates it if it differs from the desired content (global pull secret content).
-func (s *GlobalPullSecretSyncer) checkAndFixFile(pullSecretBytes []byte) error {
-	s.log.Info("Checking Kubelet's config.json file content")
+// enableGlobalPullSecretCRIOConfig configures CRIO to use the global pull secret.
+// Creates /etc/crio/crio.conf.d/99-global-pull-secret.conf with global_auth_file directive
+// pointing to /etc/hypershift/global-pull-secret.json. Only restarts CRIO if config changed.
+func (s *GlobalPullSecretSyncer) enableGlobalPullSecretCRIOConfig(pullSecretBytes []byte) error {
+	var needsCRIORestart bool
 
-	// Basic sanity check
-	if err := validateDockerConfigJSON(pullSecretBytes); err != nil {
-		return fmt.Errorf("invalid docker config.json content: %w", err)
-	}
-
-	// Read existing content if file exists
-	existingContent, err := readFileFunc(s.kubeletConfigJsonPath)
+	// Check if global pull secret content has changed
+	existingPullSecret, err := readFileFunc(s.globalPullSecretPath)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read existing file: %w", err)
+		return fmt.Errorf("failed to read existing global pull secret: %w", err)
 	}
 
-	// Preserve trailing newline if it exists in the original file
-	contentToWrite := pullSecretBytes
-	if len(existingContent) > 0 && existingContent[len(existingContent)-1] == '\n' {
-		if len(pullSecretBytes) == 0 || pullSecretBytes[len(pullSecretBytes)-1] != '\n' {
-			contentToWrite = append(pullSecretBytes, '\n')
+	if !comparePullSecretBytes(existingPullSecret, pullSecretBytes) {
+		// Write the global pull secret to the custom path
+		if err := writeFileFunc(s.globalPullSecretPath, pullSecretBytes, 0600); err != nil {
+			return fmt.Errorf("failed to write global pull secret to %s: %w", s.globalPullSecretPath, err)
 		}
+		s.log.Info("Global pull secret written", "file", s.globalPullSecretPath)
 	}
 
-	// If file content is different, write the desired content
-	if string(existingContent) != string(contentToWrite) {
-		s.log.Info("file content is different, updating it")
-		// Save original content for potential rollback
-		originalContent := existingContent
+	// Generate CRIO configuration to point to the custom path
+	crioConfig := manifests.CRIOGlobalAuthFileConfig(s.globalPullSecretPath)
 
-		// Write the new content
-		if err := writeFileFunc(s.kubeletConfigJsonPath, contentToWrite, 0600); err != nil {
-			return fmt.Errorf("failed to write file: %w", err)
-		}
-		s.log.Info("Pull secret updated", "file", s.kubeletConfigJsonPath)
+	// Check if CRIO config has changed
+	existingCRIOConfig, err := readFileFunc(s.crioGlobalPullSecretConfigPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing CRIO config: %w", err)
+	}
 
-		// Attempt to restart Kubelet with retries
-		maxRetries := 3
-		var lastErr error
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			if err := signalKubeletToRestartProcess(); err != nil {
-				lastErr = err
-				if attempt < maxRetries {
-					s.log.Info(fmt.Sprintf("Attempt %d failed, retrying...: %v", attempt, err))
-					time.Sleep(time.Duration(attempt) * time.Second)
-					continue
-				}
-			} else {
-				s.log.Info("Successfully restarted Kubelet", "attempt", attempt)
-				return nil
-			}
+	if string(existingCRIOConfig) != crioConfig {
+		needsCRIORestart = true
+
+		// Ensure the CRIO config directory exists
+		crioConfigDir := filepath.Dir(s.crioGlobalPullSecretConfigPath)
+		if _, err := os.Stat(crioConfigDir); os.IsNotExist(err) {
+			return fmt.Errorf("CRIO config directory %s does not exist", crioConfigDir)
+		} else if err != nil {
+			return fmt.Errorf("failed to check CRIO config directory %s: %w", crioConfigDir, err)
 		}
 
-		// If we reach this point, all retries failed - perform rollback
-		s.log.Info("Failed to restart Kubelet after some attempts, executing rollback", "maxRetries", maxRetries, "error", lastErr)
-		if err := writeFileFunc(s.kubeletConfigJsonPath, originalContent, 0600); err != nil {
-			return fmt.Errorf("2 errors happened: the kubelet restart failed after %d attempts and it failed to rollback the file: %w", maxRetries, err)
+		// Write CRIO configuration
+		if err := writeFileFunc(s.crioGlobalPullSecretConfigPath, []byte(crioConfig), 0644); err != nil {
+			return fmt.Errorf("failed to write CRIO config to %s: %w", s.crioGlobalPullSecretConfigPath, err)
 		}
-		return fmt.Errorf("failed to restart kubelet after %d attempts, rolled back changes: %w", maxRetries, lastErr)
+		s.log.Info("CRIO configuration updated", "file", s.crioGlobalPullSecretConfigPath)
+	} else {
+		s.log.Info("CRIO configuration unchanged, no restart needed")
+	}
+
+	// Restart CRIO only if configuration changed
+	if needsCRIORestart {
+		s.log.Info("CRIO configuration changed, restarting CRIO")
+		return s.signalDBUSToRestartCrioFunc()
 	}
 
 	return nil
 }
 
-// signalKubeletToRestartProcess signals Kubelet to reload the config by restarting the kubelet.service.
+// disableGlobalPullSecretCRIOConfig removes CRIO configuration for global pull secret.
+// Removes /etc/crio/crio.conf.d/99-global-pull-secret.conf and /etc/hypershift/global-pull-secret.json
+// so CRIO falls back to using default kubelet authentication. Only restarts CRIO if config actually existed.
+func (s *GlobalPullSecretSyncer) disableGlobalPullSecretCRIOConfig() error {
+	var needsCRIORestart bool
+
+	// Check if CRIO configuration file exists
+	_, err := os.Stat(s.crioGlobalPullSecretConfigPath)
+	if err == nil {
+		// File exists, remove it
+		if err := os.Remove(s.crioGlobalPullSecretConfigPath); err != nil {
+			return fmt.Errorf("failed to remove CRIO config file %s: %w", s.crioGlobalPullSecretConfigPath, err)
+		}
+		s.log.Info("CRIO configuration file removed", "file", s.crioGlobalPullSecretConfigPath)
+		needsCRIORestart = true
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to check CRIO config file %s: %w", s.crioGlobalPullSecretConfigPath, err)
+	} else {
+		s.log.Info("CRIO configuration file does not exist, no action needed")
+	}
+
+	// Check if global pull secret file exists, at this point it should not exist
+	_, err = os.Stat(s.globalPullSecretPath)
+	if err == nil {
+		// File exists, remove it
+		if err := os.Remove(s.globalPullSecretPath); err != nil {
+			return fmt.Errorf("failed to remove global pull secret file %s: %w", s.globalPullSecretPath, err)
+		}
+		s.log.Info("Global pull secret file removed", "file", s.globalPullSecretPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to check global pull secret file %s: %w", s.globalPullSecretPath, err)
+	}
+
+	// Restart CRIO only if configuration was actually removed
+	if needsCRIORestart {
+		s.log.Info("CRIO configuration was removed, restarting CRIO")
+		return s.signalDBUSToRestartCrioFunc()
+	} else {
+		s.log.Info("CRIO configuration unchanged, no restart needed")
+	}
+
+	return nil
+}
+
+// signalDBUSToRestartCrio signals CRIO to restart by restarting the crio.service.
 // This is done by sending a signal to systemd via dbus.
-func signalKubeletToRestartProcess() error {
+func signalDBUSToRestartCrio() error {
 	conn, err := dbus.New()
 	if err != nil {
 		return fmt.Errorf("failed to connect to dbus: %w", err)
 	}
 	defer conn.Close()
 
-	return restartKubelet(conn)
-}
-
-func restartKubelet(conn dbusConn) error {
-	ch := make(chan string)
-	if _, err := conn.RestartUnit(kubeletServiceUnit, dbusRestartUnitMode, ch); err != nil {
-		return fmt.Errorf("failed to restart kubelet: %w", err)
-	}
-
-	// Wait for the result of the restart
-	result := <-ch
-	if result != systemdJobDone {
-		return fmt.Errorf("failed to restart kubelet, result: %s", result)
-	}
-
-	return nil
-}
-
-// readPullSecretFromFile reads a pull secret from a mounted file path
-func readPullSecretFromFile(filePath string) ([]byte, error) {
-	content, err := readFileFunc(filePath)
-	if err != nil {
-		return nil, err
-	}
-	return content, nil
-}
-
-func validateDockerConfigJSON(b []byte) error {
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return err
-	}
-	if _, ok := m["auths"]; !ok {
-		return fmt.Errorf("missing 'auths' key")
-	}
-	return nil
-}
-
-func writeAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, ".config.json.tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Chmod(perm); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return restartSystemdUnit(conn, crioServiceUnit)
 }
