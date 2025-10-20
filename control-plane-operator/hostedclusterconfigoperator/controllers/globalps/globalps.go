@@ -15,8 +15,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/utils/ptr"
 
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	crreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -51,6 +53,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req crreconcile.Request) (cr
 // The new pull secret is only stored in the DataPlane side so, it's not exposed in the API. It lives in the kube-system namespace of the DataPlane.
 // If that PS exists, the HCCO deploys a DaemonSet which mounts the whole Root FS of the node, and merges the new PS with the original one.
 // If the PS doesn't exist, the HCCO doesn't do anything.
+//
+// IMPORTANT: The DaemonSet is NOT deployed to nodes that belong to NodePools using InPlace upgrade strategy.
+// This prevents conflicts between the DaemonSet's kubelet config modifications and Machine Config Daemon operations during InPlace upgrades.
 func (r *Reconciler) reconcileGlobalPullSecret(ctx context.Context) error {
 	var (
 		userProvidedPullSecretBytes []byte
@@ -80,6 +85,13 @@ func (r *Reconciler) reconcileGlobalPullSecret(ctx context.Context) error {
 	// Reconcile the RBAC for the Global Pull Secret
 	if err := reconcileGlobalPullSecretRBAC(ctx, r.hcUncachedClient, r.CreateOrUpdate, "kube-system", "openshift-config"); err != nil {
 		return fmt.Errorf("failed to reconcile global pull secret RBAC: %w", err)
+	}
+
+	// Label nodes that belong to NodePools with InPlace upgrade strategy before deploying DaemonSet
+	log.Info("labeling nodes from InPlace NodePools")
+	if err := r.labelNodesFromInPlaceNodePools(ctx); err != nil {
+		// Do not fail the reconciliation, just log the error
+		log.Error(err, "failed to label nodes from InPlace NodePools")
 	}
 
 	if userProvidedPullSecretBytes, err = validateAdditionalPullSecret(additionalPullSecret); err != nil {
@@ -121,6 +133,78 @@ func (r *Reconciler) reconcileGlobalPullSecret(ctx context.Context) error {
 	return nil
 }
 
+// labelNodesFromInPlaceNodePools labels nodes that belong to NodePools using InPlace upgrade strategy
+func (r *Reconciler) labelNodesFromInPlaceNodePools(ctx context.Context) error {
+	log := ctrl.LoggerFrom(ctx)
+
+	// Get all nodes from the hosted cluster
+	nodeList := &corev1.NodeList{}
+	if err := r.hcUncachedClient.List(ctx, nodeList); err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	// Get all MachineSets to identify which use InPlace upgrade strategy
+	machineSetList := &capiv1.MachineSetList{}
+	if err := r.cpClient.List(ctx, machineSetList, &crclient.ListOptions{
+		Namespace: r.hcpNamespace,
+	}); err != nil {
+		return fmt.Errorf("failed to list MachineSets: %w", err)
+	}
+
+	// Create set of nodes that belong to InPlace NodePools
+	nodesFromInPlaceNodePools := make(map[string]bool)
+	for _, ms := range machineSetList.Items {
+		// Check if this MachineSet belongs to a NodePool with InPlace strategy
+		// This can be identified by the presence of InPlace-specific annotations
+		if _, hasTargetConfig := ms.Annotations["hypershift.openshift.io/nodePoolTargetConfigVersion"]; hasTargetConfig {
+			// Get Machines from this MachineSet
+			machines := &capiv1.MachineList{}
+			if err := r.cpClient.List(ctx, machines, &crclient.ListOptions{
+				Namespace:     ms.Namespace,
+				LabelSelector: labels.SelectorFromSet(ms.Spec.Selector.MatchLabels),
+			}); err != nil {
+				log.Error(err, "failed to list machines for MachineSet", "machineset", ms.Name)
+				continue
+			}
+
+			// Mark nodes from these Machines as belonging to InPlace NodePools
+			for _, machine := range machines.Items {
+				if machine.Status.NodeRef != nil {
+					nodesFromInPlaceNodePools[machine.Status.NodeRef.Name] = true
+				}
+			}
+		}
+	}
+
+	// Update labels only on nodes that belong to InPlace NodePools
+	// Nodes that don't belong to InPlace NodePools don't need any label
+	// They will be eligible for DaemonSet scheduling by default
+	for _, node := range nodeList.Items {
+		if nodesFromInPlaceNodePools[node.Name] {
+			// Node belongs to a NodePool with InPlace strategy
+			nodeCopy := node.DeepCopy()
+
+			if nodeCopy.Labels == nil {
+				nodeCopy.Labels = make(map[string]string)
+			}
+
+			currentLabel := nodeCopy.Labels["hypershift.openshift.io/nodepool-inplace-strategy"]
+
+			if currentLabel != "true" {
+				nodeCopy.Labels["hypershift.openshift.io/nodepool-inplace-strategy"] = "true"
+				log.Info("labeling node as belonging to InPlace NodePool", "node", node.Name)
+
+				if err := r.hcUncachedClient.Update(ctx, nodeCopy); err != nil {
+					log.Error(err, "failed to update node labels to include InPlace NodePool strategy", "node", node.Name)
+					// Continue with other nodes
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func reconcileDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, globalPullSecretName string, c crclient.Client, createOrUpdate upsert.CreateOrUpdateFN, hccoImage string) error {
 	log := ctrl.LoggerFrom(ctx)
 	log.Info("Reconciling global pull secret daemon set")
@@ -144,6 +228,23 @@ func reconcileDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, global
 					SecurityContext:              &corev1.PodSecurityContext{},
 					DNSPolicy:                    corev1.DNSDefault,
 					Tolerations:                  []corev1.Toleration{{Operator: corev1.TolerationOpExists}},
+					// Use affinity to exclude nodes that have the InPlace NodePool label
+					Affinity: &corev1.Affinity{
+						NodeAffinity: &corev1.NodeAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+								NodeSelectorTerms: []corev1.NodeSelectorTerm{
+									{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      "hypershift.openshift.io/nodepool-inplace-strategy",
+												Operator: corev1.NodeSelectorOpDoesNotExist,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:            manifests.GlobalPullSecretDSName,
