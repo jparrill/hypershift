@@ -80,6 +80,10 @@ type LocalIgnitionProvider struct {
 
 	ImageFileCache *imageFileCache
 
+	// OSReleaseFile is the path to the os-release file for debugging.
+	// Defaults to /usr/lib/os-release if not specified.
+	OSReleaseFile string
+
 	lock sync.Mutex
 }
 
@@ -94,6 +98,10 @@ const (
 func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, customConfig, pullSecretHash, additionalTrustBundleHash, hcConfigurationHash string) ([]byte, error) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+
+	if len(p.OSReleaseFile) <= 0 {
+		p.OSReleaseFile = "/usr/lib/os-release"
+	}
 
 	log := ctrl.Log.WithName("get-payload")
 
@@ -351,7 +359,8 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 	}
 
 	// Extract binaries from the MCO image into the bin directory
-	err = p.extractMCOBinaries(ctx, "/usr/lib/os-release", mcoImage, pullSecret, binDir)
+	//TODO AI: Remove this change before commit
+	err = p.extractMCOBinaries(ctx, p.OSReleaseFile, mcoImage, pullSecret, binDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download MCO binaries: %w", err)
 	}

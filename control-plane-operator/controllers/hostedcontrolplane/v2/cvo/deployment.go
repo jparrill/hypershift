@@ -41,7 +41,7 @@ func (cvo *clusterVersionOperator) adaptDeployment(cpContext component.WorkloadC
 	}
 
 	// The CVO prepare-payload script needs the ReleaseImage digest for disconnected environments
-	controlPlaneReleaseImage, dataPlaneReleaseImage, err := discoverCVOReleaseImages(cpContext)
+	_, dataPlaneReleaseImage, err := discoverCVOReleaseImages(cpContext)
 	if err != nil {
 		return fmt.Errorf("failed to discover CVO release images: %w", err)
 	}
@@ -51,7 +51,7 @@ func (cvo *clusterVersionOperator) adaptDeployment(cpContext component.WorkloadC
 			"-c",
 			preparePayloadScript(cpContext.HCP.Spec.Platform.Type, util.HCPOAuthEnabled(cpContext.HCP), featureSet),
 		}
-		c.Image = controlPlaneReleaseImage
+		c.Image = dataPlaneReleaseImage
 	})
 
 	// the ClusterVersion resource is created by the CVO bootstrap container.
