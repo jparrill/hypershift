@@ -29,6 +29,7 @@ type RunLocalIgnitionProviderOptions struct {
 	TokenSecret         string
 	WorkDir             string
 	FeatureGateManifest string
+	OSReleaseFile       string
 }
 
 func NewRunLocalIgnitionProviderCommand() *cobra.Command {
@@ -44,6 +45,7 @@ func NewRunLocalIgnitionProviderCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.TokenSecret, "token-secret", opts.TokenSecret, "Token secret name")
 	cmd.Flags().StringVar(&opts.WorkDir, "dir", opts.WorkDir, "Working directory (default: temporary dir)")
 	cmd.Flags().StringVar(&opts.FeatureGateManifest, "feature-gate-manifest", opts.FeatureGateManifest, "Path to a rendered featuregates.config.openshift.io/v1 manifest")
+	cmd.Flags().StringVar(&opts.OSReleaseFile, "os-release-file", opts.OSReleaseFile, "Path to os-release file for debugging")
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -65,6 +67,18 @@ func NewRunLocalIgnitionProviderCommand() *cobra.Command {
 func (o *RunLocalIgnitionProviderOptions) Run(ctx context.Context) error {
 	start := time.Now()
 	log := ctrl.Log.WithName("local-ign-provider")
+
+	// If os-release file is provided, create a symlink for debugging
+	if len(o.OSReleaseFile) > 0 {
+		_, err := os.ReadFile(o.OSReleaseFile)
+		if err != nil {
+			return fmt.Errorf("failed to read os-release file: %w", err)
+		}
+		log.Info("Read os-release file", "file", o.OSReleaseFile)
+	} else {
+		o.OSReleaseFile = "/usr/lib/os-release"
+	}
+
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
 		return err
@@ -100,8 +114,17 @@ func (o *RunLocalIgnitionProviderOptions) Run(ctx context.Context) error {
 	}
 
 	p := &controllers.LocalIgnitionProvider{
-		Client:                cl,
-		ReleaseProvider:       &releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator{},
+		Client: cl,
+		ReleaseProvider: &releaseinfo.ProviderWithOpenShiftImageRegistryOverridesDecorator{
+			Delegate: &releaseinfo.RegistryMirrorProviderDecorator{
+				Delegate: &releaseinfo.CachedProvider{
+					Inner: &releaseinfo.RegistryClientProvider{},
+					Cache: map[string]*releaseinfo.ReleaseImage{},
+				},
+				RegistryOverrides: map[string]string{},
+			},
+			OpenShiftImageRegistryOverrides: map[string][]string{},
+		},
 		ImageMetadataProvider: imageMetaDataProvider,
 		CloudProvider:         "",
 		Namespace:             o.Namespace,
@@ -109,6 +132,7 @@ func (o *RunLocalIgnitionProviderOptions) Run(ctx context.Context) error {
 		PreserveOutput:        true,
 		ImageFileCache:        imageFileCache,
 		FeatureGateManifest:   o.FeatureGateManifest,
+		OSReleaseFile:         o.OSReleaseFile,
 	}
 
 	payload, err := p.GetPayload(ctx, o.Image, config.String(), "", "", "")

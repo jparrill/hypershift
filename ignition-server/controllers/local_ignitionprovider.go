@@ -80,6 +80,10 @@ type LocalIgnitionProvider struct {
 
 	ImageFileCache *imageFileCache
 
+	// OSReleaseFile is the path to the os-release file for debugging.
+	// Defaults to /usr/lib/os-release if not specified.
+	OSReleaseFile string
+
 	lock sync.Mutex
 }
 
@@ -95,7 +99,12 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
+	if len(p.OSReleaseFile) <= 0 {
+		p.OSReleaseFile = "/usr/lib/os-release"
+	}
+
 	log := ctrl.Log.WithName("get-payload")
+	log.Info("OSReleaseFile", "file", p.OSReleaseFile)
 
 	// Fetch the pull secret contents
 	pullSecret, err := func() ([]byte, error) {
@@ -351,7 +360,8 @@ func (p *LocalIgnitionProvider) GetPayload(ctx context.Context, releaseImage, cu
 	}
 
 	// Extract binaries from the MCO image into the bin directory
-	err = p.extractMCOBinaries(ctx, "/usr/lib/os-release", mcoImage, pullSecret, binDir)
+	//TODO AI: Remove this change before commit
+	err = p.extractMCOBinaries(ctx, p.OSReleaseFile, mcoImage, pullSecret, binDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download MCO binaries: %w", err)
 	}
@@ -827,6 +837,7 @@ func (p *LocalIgnitionProvider) extractMCOBinaries(ctx context.Context, cpoOSRel
 	start := time.Now()
 	binaries := []string{"machine-config-operator", "machine-config-controller", "machine-config-server"}
 	suffix := ""
+	log.Info("DEBUG:OSReleaseFile", "file", p.OSReleaseFile)
 
 	mcoOSReleaseBuf := &bytes.Buffer{}
 	if err := p.ImageFileCache.extractImageFile(ctx, mcoImage, pullSecret, "usr/lib/os-release", mcoOSReleaseBuf); err != nil {
