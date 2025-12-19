@@ -7,6 +7,10 @@ import (
 
 const (
 	ComponentName = "etcd"
+
+	// OADP hooks for backup/restore
+	OADPPreHookBackupCommand  = `["/usr/sbin/fsfreeze", "--freeze", "/var/lib/data"]`
+	OADPPostHookBackupCommand = `["/usr/sbin/fsfreeze", "--unfreeze", "/var/lib/data"]`
 )
 
 var _ component.ComponentOptions = &etcd{}
@@ -43,6 +47,10 @@ func NewComponent() component.ControlPlaneComponent {
 			component.AdaptPodDisruptionBudget(),
 		).
 		WithManifestAdapter(
+			"etcd-serviceaccount.yaml",
+			component.WithPredicate(isManagedETCDPredicate),
+		).
+		WithManifestAdapter(
 			"defrag-role.yaml",
 			component.WithPredicate(defragControllerPredicate),
 		).
@@ -60,6 +68,11 @@ func NewComponent() component.ControlPlaneComponent {
 func isManagedETCD(cpContext component.WorkloadContext) (bool, error) {
 	managed := cpContext.HCP.Spec.Etcd.ManagementType == hyperv1.Managed
 	return managed, nil
+}
+
+// Predicate for etcd ServiceAccount and SCC - simplified bool return
+func isManagedETCDPredicate(cpContext component.WorkloadContext) bool {
+	return cpContext.HCP.Spec.Etcd.ManagementType == hyperv1.Managed
 }
 
 // Only deploy etcd-defrag-controller in HA mode.

@@ -105,3 +105,13 @@ func EtcdBackupCronJob(hcpNamespace string) *batchv1.CronJob {
 		},
 	}
 }
+
+func EtcdServiceAccount(ns string) *corev1.ServiceAccount {
+	return &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "etcd",
+			Namespace: ns,
+		},
+	}
+}
+

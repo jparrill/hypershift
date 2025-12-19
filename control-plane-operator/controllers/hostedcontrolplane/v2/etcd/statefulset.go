@@ -75,6 +75,23 @@ func adaptStatefulSet(cpContext component.WorkloadContext, sts *appsv1.StatefulS
 		sts.Spec.Template.Spec.ServiceAccountName = manifests.EtcdDefragControllerServiceAccount("").Name
 	}
 
+	// Add CAP_SYS_ADMIN capability for fsfreeze operations
+	util.UpdateContainer(ComponentName, sts.Spec.Template.Spec.Containers, func(c *corev1.Container) {
+		if c.SecurityContext == nil {
+			c.SecurityContext = &corev1.SecurityContext{}
+		}
+		if c.SecurityContext.Capabilities == nil {
+			c.SecurityContext.Capabilities = &corev1.Capabilities{}
+		}
+
+		// Add SYS_ADMIN for fsfreeze operations
+		c.SecurityContext.Capabilities.Add = append(
+			c.SecurityContext.Capabilities.Add,
+			// Add SYS_ADMIN for fsfreeze operations for OADP hooks (Backup/Restore)
+			"SYS_ADMIN",
+		)
+	})
+
 	snapshotRestored := meta.IsStatusConditionTrue(hcp.Status.Conditions, string(hyperv1.EtcdSnapshotRestored))
 	if managedEtcdSpec != nil && len(managedEtcdSpec.Storage.RestoreSnapshotURL) > 0 && !snapshotRestored {
 		sts.Spec.Template.Spec.InitContainers = append(sts.Spec.Template.Spec.InitContainers,
@@ -96,8 +113,27 @@ func adaptStatefulSet(cpContext component.WorkloadContext, sts *appsv1.StatefulS
 		}
 	}
 
+	// Set ServiceAccount for etcd to use custom SCC
+	sts.Spec.Template.Spec.ServiceAccountName = manifests.EtcdServiceAccount("").Name
+
+	// Add Velero backup hooks annotations for fsfreeze
+	if sts.Spec.Template.ObjectMeta.Annotations == nil {
+		sts.Spec.Template.ObjectMeta.Annotations = make(map[string]string)
+	}
+
+	// Velero fsfreeze hooks for etcd data consistency
+	sts.Spec.Template.ObjectMeta.Annotations["pre.hook.backup.velero.io/command"] =
+		OADPPreHookBackupCommand
+	sts.Spec.Template.ObjectMeta.Annotations["pre.hook.backup.velero.io/container"] =
+		ComponentName // "etcd"
+	sts.Spec.Template.ObjectMeta.Annotations["post.hook.backup.velero.io/command"] =
+		OADPPostHookBackupCommand
+	sts.Spec.Template.ObjectMeta.Annotations["post.hook.backup.velero.io/container"] =
+		ComponentName // "etcd"
+
 	return nil
 }
+
 
 //go:embed etcd-init.sh
 var etcdInitScript string

@@ -47,6 +47,7 @@ import (
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests/clusterapi"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests/controlplaneoperator"
 	controlplanepkioperatormanifests "github.com/openshift/hypershift/hypershift-operator/controllers/manifests/controlplanepkioperator"
+	etcdmanifests "github.com/openshift/hypershift/hypershift-operator/controllers/manifests/etcd"
 	etcdrecoverymanifests "github.com/openshift/hypershift/hypershift-operator/controllers/manifests/etcdrecovery"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/manifests/ignitionserver"
 	kvinfra "github.com/openshift/hypershift/kubevirtexternalinfra"
@@ -2430,6 +2431,17 @@ func (r *HostedClusterReconciler) reconcileCAPIManager(cpContext controlplanecom
 	})
 	if err != nil {
 		return fmt.Errorf("failed to reconcile capi manager cluster role binding: %w", err)
+	}
+
+	// Reconcile etcd SCC for fsfreeze capabilities (only if etcd is managed)
+	if hcluster.Spec.Etcd.ManagementType == hyperv1.Managed {
+		etcdSCC := etcdmanifests.EtcdSecurityContextConstraints(hcluster)
+		_, err = createOrUpdate(cpContext, r.Client, etcdSCC, func() error {
+			return nil // SCC is already fully configured in the manifest
+		})
+		if err != nil {
+			return fmt.Errorf("failed to reconcile etcd security context constraints: %w", err)
+		}
 	}
 
 	imageOverride := hcluster.Annotations[hyperv1.ClusterAPIManagerImage]
