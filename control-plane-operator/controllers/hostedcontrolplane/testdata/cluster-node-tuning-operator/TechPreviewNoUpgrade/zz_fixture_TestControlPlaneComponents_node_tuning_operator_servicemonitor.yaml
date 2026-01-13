@@ -24,7 +24,7 @@ spec:
       replacement: ""
       targetLabel: _id
     scheme: https
-    targetPort: 60000
+    targetPort: 8080
     tlsConfig:
       ca:
         configMap:

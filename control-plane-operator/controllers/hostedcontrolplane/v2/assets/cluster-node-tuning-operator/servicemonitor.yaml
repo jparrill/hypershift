@@ -11,7 +11,7 @@ spec:
       - __name__
     path: /metrics
     scheme: https
-    targetPort: 60000
+    targetPort: 8080
     tlsConfig:
       ca:
         configMap:

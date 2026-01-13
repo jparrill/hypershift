@@ -72,6 +72,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/go-logr/zapr"
 	"github.com/google/go-cmp/cmp"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
@@ -4186,4 +4187,113 @@ func ExtractVersionFromReleaseImage(releaseImage string) string {
 
 	// No known architecture suffix found, return the tag as-is
 	return tag
+}
+
+// EnsureNodeTuningOperatorMetricsPortConfiguration verifies that the node-tuning-operator
+// service and servicemonitor are configured to use port 8080 for metrics, and that metrics
+// are accessible on the correct port. This validates the fix for OCPBUGS-72596.
+func EnsureNodeTuningOperatorMetricsPortConfiguration(t *testing.T, ctx context.Context, mgmtClient crclient.Client, hostedCluster *hyperv1.HostedCluster) {
+	t.Run("EnsureNodeTuningOperatorMetricsPortConfiguration", func(t *testing.T) {
+		g := NewWithT(t)
+
+		hcpNamespace := manifests.HostedControlPlaneNamespace(hostedCluster.Namespace, hostedCluster.Name)
+
+		t.Logf("Validating node-tuning-operator metrics port configuration in namespace %s", hcpNamespace)
+
+		// 1. Validate Service is configured for port 8080
+		service := &corev1.Service{}
+		err := mgmtClient.Get(ctx, crclient.ObjectKey{
+			Namespace: hcpNamespace,
+			Name:      "node-tuning-operator",
+		}, service)
+		g.Expect(err).NotTo(HaveOccurred(), "node-tuning-operator service should exist")
+
+		// Find the metrics port
+		var foundMetricsPort bool
+		for _, port := range service.Spec.Ports {
+			if port.Name == "metrics" {
+				g.Expect(port.Port).To(Equal(int32(8080)), "service metrics port should be 8080")
+				g.Expect(port.TargetPort.IntVal).To(Equal(int32(8080)), "service metrics targetPort should be 8080")
+				foundMetricsPort = true
+				break
+			}
+		}
+		g.Expect(foundMetricsPort).To(BeTrue(), "service should have a metrics port defined")
+		t.Logf("✓ Service metrics port correctly configured to 8080")
+
+		// 2. Validate ServiceMonitor is configured for port 8080
+		serviceMonitor := &monitoringv1.ServiceMonitor{}
+		err = mgmtClient.Get(ctx, crclient.ObjectKey{
+			Namespace: hcpNamespace,
+			Name:      "node-tuning-operator",
+		}, serviceMonitor)
+		g.Expect(err).NotTo(HaveOccurred(), "node-tuning-operator servicemonitor should exist")
+
+		// Find the metrics endpoint
+		var foundMetricsEndpoint bool
+		for _, endpoint := range serviceMonitor.Spec.Endpoints {
+			if endpoint.Path == "/metrics" {
+				g.Expect(endpoint.TargetPort.String()).To(Equal("8080"), "servicemonitor targetPort should be 8080")
+				foundMetricsEndpoint = true
+				break
+			}
+		}
+		g.Expect(foundMetricsEndpoint).To(BeTrue(), "servicemonitor should have a metrics endpoint defined")
+		t.Logf("ServiceMonitor metrics endpoint correctly configured to target port 8080")
+
+		// 3. Validate Deployment is configured for containerPort 8080
+		deployment := &appsv1.Deployment{}
+		err = mgmtClient.Get(ctx, crclient.ObjectKey{
+			Namespace: hcpNamespace,
+			Name:      "cluster-node-tuning-operator",
+		}, deployment)
+		g.Expect(err).NotTo(HaveOccurred(), "cluster-node-tuning-operator deployment should exist")
+
+		// Find the metrics port in container ports
+		var foundContainerMetricsPort bool
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Name == "cluster-node-tuning-operator" {
+				for _, port := range container.Ports {
+					if port.Name == "metrics" {
+						g.Expect(port.ContainerPort).To(Equal(int32(8080)), "container metrics port should be 8080")
+						foundContainerMetricsPort = true
+						break
+					}
+				}
+				break
+			}
+		}
+		g.Expect(foundContainerMetricsPort).To(BeTrue(), "deployment should have a container metrics port defined")
+		t.Logf("Deployment container metrics port correctly configured to 8080")
+
+		// 4. Validate that metrics are accessible on port 8080
+		t.Logf("Validating that node-tuning-operator metrics are accessible on port 8080...")
+
+		// Wait for deployment to be ready
+		Eventually(func() bool {
+			err := mgmtClient.Get(ctx, crclient.ObjectKey{
+				Namespace: hcpNamespace,
+				Name:      "cluster-node-tuning-operator",
+			}, deployment)
+			if err != nil {
+				return false
+			}
+			return deployment.Status.ReadyReplicas > 0
+		}, 2*time.Minute, 5*time.Second).Should(BeTrue(), "node-tuning-operator deployment should be ready")
+
+		// Try to get metrics from the pod on port 8080
+		Eventually(func() error {
+			mf, err := GetMetricsFromPod(ctx, mgmtClient, "cluster-node-tuning-operator", "cluster-node-tuning-operator", hcpNamespace, "8080")
+			if err != nil {
+				return fmt.Errorf("failed to get metrics from node-tuning-operator on port 8080: %v", err)
+			}
+			if len(mf) == 0 {
+				return fmt.Errorf("no metrics found from node-tuning-operator on port 8080")
+			}
+			t.Logf("Successfully retrieved %d metric families from node-tuning-operator on port 8080", len(mf))
+			return nil
+		}, 3*time.Minute, 10*time.Second).Should(Succeed(), "should be able to get metrics from node-tuning-operator on port 8080")
+
+		t.Logf("Node-tuning-operator metrics port configuration validation completed successfully")
+	})
 }
