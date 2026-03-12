@@ -2907,9 +2907,6 @@ spec:
                             maximum: 9216
                             minimum: 576
                             type: integer
-                            x-kubernetes-validations:
-                            - message: mtu is immutable
-                              rule: self == oldSelf
                         type: object
                         x-kubernetes-validations:
                         - message: internalJoinSubnet and internalTransitSwitchSubnet
@@ -2917,6 +2914,11 @@ spec:
                           rule: '!has(self.ipv4) || !has(self.ipv4.internalJoinSubnet)
                             || !has(self.ipv4.internalTransitSwitchSubnet) || self.ipv4.internalJoinSubnet
                             != self.ipv4.internalTransitSwitchSubnet'
+                        - message: mtu is immutable once set and cannot be removed
+                          rule: '!has(oldSelf.mtu) || has(self.mtu)'
+                        - message: mtu is immutable once set
+                          rule: '!has(oldSelf.mtu) || !has(self.mtu) || self.mtu ==
+                            oldSelf.mtu'
                     type: object
                   ingressOperator:
                     description: |-
