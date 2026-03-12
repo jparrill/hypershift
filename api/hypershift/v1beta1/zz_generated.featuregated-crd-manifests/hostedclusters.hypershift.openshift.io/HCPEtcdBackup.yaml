@@ -3106,6 +3106,8 @@ spec:
                           rule: '!has(self.ipv4) || !has(self.ipv4.internalJoinSubnet)
                             || !has(self.ipv4.internalTransitSwitchSubnet) || self.ipv4.internalJoinSubnet
                             != self.ipv4.internalTransitSwitchSubnet'
+                        - message: mtu is immutable once set and cannot be removed
+                          rule: '!has(oldSelf.mtu) || has(self.mtu)'
                     type: object
                   ingressOperator:
                     description: |-
