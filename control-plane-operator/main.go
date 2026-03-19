@@ -99,6 +99,8 @@ func commandFor(name string) *cobra.Command {
 		cmd = syncfgconfigmap.NewRunCommand()
 	case "sync-global-pullsecret":
 		cmd = syncglobalpullsecret.NewRunCommand()
+	case "fetch-etcd-certs":
+		cmd = etcdbackup.NewFetchCertsCommand()
 	default:
 		// for the default case, there is no need
 		// to convert flags, return immediately
@@ -149,6 +151,7 @@ func defaultCommand() *cobra.Command {
 	cmd.AddCommand(kubernetesdefaultproxy.NewStartCommand())
 	cmd.AddCommand(dnsresolver.NewCommand())
 	cmd.AddCommand(etcdbackup.NewStartCommand())
+	cmd.AddCommand(etcdbackup.NewFetchCertsCommand())
 	cmd.AddCommand(kasbootstrap.NewRunCommand())
 	cmd.AddCommand(syncfgconfigmap.NewRunCommand())
 	cmd.AddCommand(syncglobalpullsecret.NewRunCommand())
