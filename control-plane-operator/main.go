@@ -23,6 +23,7 @@ import (
 	"github.com/openshift/hypershift/dnsresolver"
 	etcdbackup "github.com/openshift/hypershift/etcd-backup"
 	etcddefrag "github.com/openshift/hypershift/etcd-defrag"
+	etcdupload "github.com/openshift/hypershift/etcd-upload"
 	ignitionserver "github.com/openshift/hypershift/ignition-server/cmd"
 	kasbootstrap "github.com/openshift/hypershift/kas-bootstrap"
 	konnectivityhttpsproxy "github.com/openshift/hypershift/konnectivity-https-proxy"
@@ -97,6 +98,8 @@ func commandFor(name string) *cobra.Command {
 		cmd = tokenminter.NewStartCommand()
 	case "etcd-defrag-controller":
 		cmd = etcddefrag.NewStartCommand()
+	case "etcd-upload":
+		cmd = etcdupload.NewStartCommand()
 	case "sync-fg-configmap":
 		cmd = syncfgconfigmap.NewRunCommand()
 	case "sync-global-pullsecret":
@@ -156,6 +159,7 @@ func defaultCommand() *cobra.Command {
 	cmd.AddCommand(dnsresolver.NewCommand())
 	cmd.AddCommand(etcdbackup.NewStartCommand())
 	cmd.AddCommand(etcdbackup.NewFetchCertsCommand())
+	cmd.AddCommand(etcdupload.NewStartCommand())
 	cmd.AddCommand(kasbootstrap.NewRunCommand())
 	cmd.AddCommand(syncfgconfigmap.NewRunCommand())
 	cmd.AddCommand(syncglobalpullsecret.NewRunCommand())
