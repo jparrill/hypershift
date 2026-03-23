@@ -17,14 +17,16 @@ func TestNewStartCommand(t *testing.T) {
 
 	g.Expect(cmd.Use).To(Equal("etcd-backup"))
 
-	for _, flag := range []string{"backup-dir", "etcd-endpoint", "etcd-client-cert", "etcd-client-key", "etcd-ca-cert"} {
+	for _, flag := range []string{"backup-dir", "etcd-endpoint", "etcd-client-cert", "etcd-client-key", "etcd-ca-cert", "s3-bucket-name", "s3-bucket-region", "s3-key-prefix", "s3-object-tags"} {
 		g.Expect(cmd.Flags().Lookup(flag)).ToNot(BeNil(), "expected flag %q to exist", flag)
 	}
 
-	// etcd-endpoint should be required
+	// etcd-endpoint, s3-bucket-name and s3-key-prefix should be required
 	err := cmd.ValidateRequiredFlags()
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("etcd-endpoint"))
+	g.Expect(err.Error()).To(ContainSubstring("s3-bucket-name"))
+	g.Expect(err.Error()).To(ContainSubstring("s3-key-prefix"))
 }
 
 func TestNewStartCommandDefaults(t *testing.T) {
