@@ -3,6 +3,7 @@ package util
 import (
 	"errors"
 
+	configv2 "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -37,9 +38,15 @@ func IsErrorRetryable(err error) bool {
 }
 
 func isCredentialLoadError(err error) bool {
+	// v2 SDK: LoadDefaultConfig returns SharedConfigLoadError when a shared credentials
+	// file cannot be opened or parsed.
+	var sharedCfgErr configv2.SharedConfigLoadError
+	if errors.As(err, &sharedCfgErr) {
+		return true
+	}
+	// v1 SDK fallback (retained for any remaining v1 session paths)
 	if awsErr := awserr.Error(nil); errors.As(err, &awsErr) && awsErr.Code() == "SharedCredsLoad" {
 		return true
 	}
-
 	return false
 }
