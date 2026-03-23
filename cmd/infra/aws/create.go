@@ -199,13 +199,13 @@ func (o *CreateInfraOptions) CreateInfra(ctx context.Context, l logr.Logger) (*C
 		return nil, err
 	}
 
-	awsSessionv2, err := o.AWSCredentialsOpts.GetSessionV2(ctx, "cli-create-infra", o.CredentialsSecretData, o.Region)
+	awsSession, err := o.AWSCredentialsOpts.GetSession(ctx, "cli-create-infra", o.CredentialsSecretData, o.Region)
 	if err != nil {
 		return nil, err
 	}
-	var vpcOwnerSessionv2 *aws.Config
+	var vpcOwnerSession *aws.Config
 	if o.VPCOwnerCredentialOpts.AWSCredentialsFile != "" {
-		vpcOwnerSessionv2, err = o.VPCOwnerCredentialOpts.GetSessionV2(ctx, "cli-create-infra", nil, o.Region)
+		vpcOwnerSession, err = o.VPCOwnerCredentialOpts.GetSession(ctx, "cli-create-infra", nil, o.Region)
 		if err != nil {
 			return nil, err
 		}
@@ -213,23 +213,23 @@ func (o *CreateInfraOptions) CreateInfra(ctx context.Context, l logr.Logger) (*C
 
 	var clusterCreatorEC2Client, ec2Client awsapi.EC2API
 	var vpcOwnerRoute53Client, route53Client awsapi.ROUTE53API
-	awsConfigv2 := awsutil.NewConfigV2()
-	clusterCreatorEC2Client = ec2.NewFromConfig(*awsSessionv2, func(o *ec2.Options) {
-		o.Retryer = awsConfigv2()
+	awsConfig := awsutil.NewConfig()
+	clusterCreatorEC2Client = ec2.NewFromConfig(*awsSession, func(o *ec2.Options) {
+		o.Retryer = awsConfig()
 	})
-	if vpcOwnerSessionv2 != nil {
-		ec2Client = ec2.NewFromConfig(*vpcOwnerSessionv2, func(o *ec2.Options) {
-			o.Retryer = awsConfigv2()
+	if vpcOwnerSession != nil {
+		ec2Client = ec2.NewFromConfig(*vpcOwnerSession, func(o *ec2.Options) {
+			o.Retryer = awsConfig()
 		})
 	} else {
 		ec2Client = clusterCreatorEC2Client
 	}
-	route53Client = route53.NewFromConfig(*awsSessionv2, func(o *route53.Options) {
-		o.Retryer = awsutil.NewRoute53ConfigV2()()
+	route53Client = route53.NewFromConfig(*awsSession, func(o *route53.Options) {
+		o.Retryer = awsutil.NewRoute53Config()()
 	})
-	if vpcOwnerSessionv2 != nil {
-		vpcOwnerRoute53Client = route53.NewFromConfig(*vpcOwnerSessionv2, func(o *route53.Options) {
-			o.Retryer = awsutil.NewRoute53ConfigV2()()
+	if vpcOwnerSession != nil {
+		vpcOwnerRoute53Client = route53.NewFromConfig(*vpcOwnerSession, func(o *route53.Options) {
+			o.Retryer = awsutil.NewRoute53Config()()
 		})
 	} else {
 		vpcOwnerRoute53Client = route53Client
@@ -339,8 +339,8 @@ func (o *CreateInfraOptions) CreateInfra(ctx context.Context, l logr.Logger) (*C
 		return nil, err
 	}
 
-	if vpcOwnerSessionv2 != nil {
-		if err := o.shareSubnets(ctx, l, vpcOwnerSessionv2, awsSessionv2, publicSubnetIDs, result); err != nil {
+	if vpcOwnerSession != nil {
+		if err := o.shareSubnets(ctx, l, vpcOwnerSession, awsSession, publicSubnetIDs, result); err != nil {
 			return nil, err
 		}
 	}
@@ -569,18 +569,18 @@ func (o *CreateInfraOptions) createProxyHost(ctx context.Context, l logr.Logger,
 func (o *CreateInfraOptions) shareSubnets(ctx context.Context, l logr.Logger, vpcOwnerSessionv2, clusterSessionv2 *aws.Config, publicSubnetIDs []string, output *CreateInfraOutput) error {
 	// Obtain account IDs for both accounts using v2 STS
 	clusterSTSClient := sts.NewFromConfig(*clusterSessionv2, func(o *sts.Options) {
-		o.Retryer = awsutil.NewConfigV2()()
+		o.Retryer = awsutil.NewConfig()()
 	})
 	vpcOwnerSTSClient := sts.NewFromConfig(*vpcOwnerSessionv2, func(o *sts.Options) {
-		o.Retryer = awsutil.NewConfigV2()()
+		o.Retryer = awsutil.NewConfig()()
 	})
 
-	awsConfigv2 := awsutil.NewConfigV2()
+	awsConfig := awsutil.NewConfig()
 	clusterEC2Client := ec2.NewFromConfig(*clusterSessionv2, func(o *ec2.Options) {
-		o.Retryer = awsConfigv2()
+		o.Retryer = awsConfig()
 	})
 	vpcOwnerEC2Client := ec2.NewFromConfig(*vpcOwnerSessionv2, func(o *ec2.Options) {
-		o.Retryer = awsConfigv2()
+		o.Retryer = awsConfig()
 	})
 
 	clusterAccountID, err := clusterSTSClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
@@ -622,7 +622,7 @@ func (o *CreateInfraOptions) shareSubnets(ctx context.Context, l logr.Logger, vp
 	// Share subnets
 	l.Info("Sharing VPC subnets with cluster creator account", "subnetids", allSubnetIDsToShare)
 	ramClient := ram.NewFromConfig(*vpcOwnerSessionv2, func(o *ram.Options) {
-		o.Retryer = awsutil.NewConfigV2()()
+		o.Retryer = awsutil.NewConfig()()
 	})
 	if _, err = ramClient.CreateResourceShare(ctx, &ram.CreateResourceShareInput{
 		Name:         aws.String(fmt.Sprintf("%s-share", o.InfraID)),

@@ -107,13 +107,13 @@ func (r *AWSEndpointServiceReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	}
 
 	// AWS_SHARED_CREDENTIALS_FILE and AWS_REGION envvar should be set in operator deployment
-	awsSessionv2 := awsutil.NewSessionV2(context.Background(), "hypershift-operator", "", "", "", "")
-	awsConfigv2 := awsutil.NewConfigV2()
-	r.ec2Client = ec2.NewFromConfig(*awsSessionv2, func(o *ec2.Options) {
-		o.Retryer = awsConfigv2()
+	awsSession := awsutil.NewSession(context.Background(), "hypershift-operator", "", "", "", "")
+	awsConfig := awsutil.NewConfig()
+	r.ec2Client = ec2.NewFromConfig(*awsSession, func(o *ec2.Options) {
+		o.Retryer = awsConfig()
 	})
-	r.elbv2Client = elbv2.NewFromConfig(*awsSessionv2, func(o *elbv2.Options) {
-		o.Retryer = awsConfigv2()
+	r.elbv2Client = elbv2.NewFromConfig(*awsSession, func(o *elbv2.Options) {
+		o.Retryer = awsConfig()
 	})
 
 	return nil

@@ -9,7 +9,7 @@ import (
 	awsv2 "github.com/aws/aws-sdk-go-v2/aws"
 )
 
-func TestNewSessionV2(t *testing.T) {
+func TestNewSession(t *testing.T) {
 	ctx := context.Background()
 
 	testCases := []struct {
@@ -103,7 +103,7 @@ aws_secret_access_key = test-secret-key
 				tc.credentialsFile = credsFile
 			}
 
-			cfg := NewSessionV2(ctx, tc.agent, tc.credentialsFile, tc.credKey, tc.credSecretKey, tc.region)
+			cfg := NewSession(ctx, tc.agent, tc.credentialsFile, tc.credKey, tc.credSecretKey, tc.region)
 
 			if tc.expectNonNil && cfg == nil {
 				t.Error("Expected non-nil config, got nil")
@@ -122,31 +122,31 @@ aws_secret_access_key = test-secret-key
 	}
 }
 
-func TestNewSessionV2_UserAgent(t *testing.T) {
+func TestNewSession_UserAgent(t *testing.T) {
 	ctx := context.Background()
 	agent := "test-user-agent"
 
-	cfg := NewSessionV2(ctx, agent, "", "test-key", "test-secret", "us-east-1")
+	cfg := NewSession(ctx, agent, "", "test-key", "test-secret", "us-east-1")
 
 	if cfg == nil {
 		t.Fatal("Expected non-nil config")
 	}
 }
 
-func TestNewSessionV2_ContextPropagation(t *testing.T) {
+func TestNewSession_ContextPropagation(t *testing.T) {
 	// Create a context with a specific value to verify it's being used
 	type ctxKey string
 	testKey := ctxKey("test")
 	ctx := context.WithValue(context.Background(), testKey, "test-value")
 
-	cfg := NewSessionV2(ctx, "test-agent", "", "test-key", "test-secret", "us-east-1")
+	cfg := NewSession(ctx, "test-agent", "", "test-key", "test-secret", "us-east-1")
 
 	if cfg == nil {
 		t.Error("Expected non-nil config")
 	}
 }
 
-func TestGetSessionV2(t *testing.T) {
+func TestGetSession(t *testing.T) {
 	ctx := context.Background()
 
 	testCases := []struct {
@@ -194,7 +194,7 @@ aws_secret_access_key = test-secret-key
 				tc.opts.AWSCredentialsFile = credsFile
 			}
 
-			cfg, err := tc.opts.GetSessionV2(ctx, tc.agent, nil, tc.region)
+			cfg, err := tc.opts.GetSession(ctx, tc.agent, nil, tc.region)
 
 			if tc.expectError {
 				if err == nil {

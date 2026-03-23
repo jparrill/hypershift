@@ -292,8 +292,8 @@ func validateAWSGuestResourcesDeletedFunc(ctx context.Context, t *testing.T, inf
 	}
 
 	return func() {
-		awsSession := awsutil.NewSessionV2(ctx, "cleanup-validation", awsCreds, "", "", awsRegion)
-		awsConfig := awsutil.NewConfigV2()
+		awsSession := awsutil.NewSession(ctx, "cleanup-validation", awsCreds, "", "", awsRegion)
+		awsConfig := awsutil.NewConfig()
 		taggingClient := resourcegroupstaggingapi.NewFromConfig(*awsSession, func(o *resourcegroupstaggingapi.Options) {
 			o.Retryer = awsConfig()
 		})

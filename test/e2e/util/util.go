@@ -2746,11 +2746,11 @@ func createIngressRoute53Record(t *testing.T, ctx context.Context, client crclie
 	routerDefaultIP, err := getIngressRouterDefaultIP(t, ctx, client, hostedCluster)
 	g.Expect(err).ToNot(HaveOccurred(), "failed to get router-default service IP")
 
-	awsSessionv2, err := clusterOpts.AWSPlatform.Credentials.GetSessionV2(ctx, "e2e-openstack-dns-record-on-aws", nil, awsRegion)
+	awsSession, err := clusterOpts.AWSPlatform.Credentials.GetSession(ctx, "e2e-openstack-dns-record-on-aws", nil, awsRegion)
 	g.Expect(err).ToNot(HaveOccurred(), "failed to create AWS session")
 
-	route53Client := route53v2.NewFromConfig(*awsSessionv2, func(o *route53v2.Options) {
-		o.Retryer = awsutil.NewRoute53ConfigV2()()
+	route53Client := route53v2.NewFromConfig(*awsSession, func(o *route53v2.Options) {
+		o.Retryer = awsutil.NewRoute53Config()()
 	})
 	g.Expect(route53Client).ToNot(BeNil(), "failed to create Route53 client")
 
@@ -2779,11 +2779,11 @@ func deleteIngressRoute53Records(t *testing.T, ctx context.Context, hostedCluste
 	// This is hardcoded too in aws CreateInfraOptions
 	awsRegion := "us-east-1"
 
-	awsSessionv2, err := clusterOpts.AWSPlatform.Credentials.GetSessionV2(ctx, "e2e-openstack-dns-record-on-aws", nil, awsRegion)
+	awsSession, err := clusterOpts.AWSPlatform.Credentials.GetSession(ctx, "e2e-openstack-dns-record-on-aws", nil, awsRegion)
 	g.Expect(err).ToNot(HaveOccurred(), "failed to create AWS session")
 
-	route53Client := route53v2.NewFromConfig(*awsSessionv2, func(o *route53v2.Options) {
-		o.Retryer = awsutil.NewRoute53ConfigV2()()
+	route53Client := route53v2.NewFromConfig(*awsSession, func(o *route53v2.Options) {
+		o.Retryer = awsutil.NewRoute53Config()()
 	})
 	g.Expect(route53Client).ToNot(BeNil(), "failed to create Route53 client")
 

@@ -278,12 +278,12 @@ func GetEC2Client(ctx context.Context) (awsapi.EC2API, *aws.Config) {
 	// when reconciling an AWS hosted control plane
 	if os.Getenv("AWS_SHARED_CREDENTIALS_FILE") != "" {
 		// v2
-		awsSessionV2 := awsutil.NewSessionV2(ctx, "control-plane-operator", "", "", "", "")
-		awsConfigV2 := awsutil.NewConfigV2()
-		ec2Client := ec2.NewFromConfig(*awsSessionV2, func(o *ec2.Options) {
-			o.Retryer = awsConfigV2()
+		awsSession := awsutil.NewSession(ctx, "control-plane-operator", "", "", "", "")
+		awsConfig := awsutil.NewConfig()
+		ec2Client := ec2.NewFromConfig(*awsSession, func(o *ec2.Options) {
+			o.Retryer = awsConfig()
 		})
-		return ec2Client, awsSessionV2
+		return ec2Client, awsSession
 	}
 	return nil, nil
 }

@@ -96,8 +96,8 @@ func InferBaseDomain(ctx context.Context, awsCredentialsFile string) (string, er
 	if zoneID == "" {
 		return "", fmt.Errorf("no public zone ID found")
 	}
-	awsSessionv2 := awsutil.NewSessionV2(ctx, "e2e-route53", awsCredentialsFile, "", "", "us-east-1")
-	route53Client := route53v2.NewFromConfig(*awsSessionv2)
+	awsSession := awsutil.NewSession(ctx, "e2e-route53", awsCredentialsFile, "", "", "us-east-1")
+	route53Client := route53v2.NewFromConfig(*awsSession)
 	hostedZoneResult, err := route53Client.GetHostedZone(ctx, &route53v2.GetHostedZoneInput{
 		Id: awsv2.String(zoneID),
 	})

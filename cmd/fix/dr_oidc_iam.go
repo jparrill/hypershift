@@ -224,16 +224,16 @@ func (o *DrOidcIamOptions) getAWSConfig(ctx context.Context, agent string, regio
 		if _, err := os.Stat(o.AWSCredentialsFile); err != nil {
 			return nil, fmt.Errorf("failed to read AWS credentials file %s: %w", o.AWSCredentialsFile, err)
 		}
-		return awsutil.NewSessionV2(ctx, agent, o.AWSCredentialsFile, "", "", region), nil
+		return awsutil.NewSession(ctx, agent, o.AWSCredentialsFile, "", "", region), nil
 	}
 
 	if o.STSCredentialsFile != "" {
-		creds, err := awsutil.ParseSTSCredentialsFileV2(o.STSCredentialsFile)
+		creds, err := awsutil.ParseSTSCredentialsFile(o.STSCredentialsFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse STS credentials: %w", err)
 		}
 
-		return awsutil.NewSTSSessionV2(ctx, agent, o.RoleArn, region, creds)
+		return awsutil.NewSTSSession(ctx, agent, o.RoleArn, region, creds)
 	}
 
 	return nil, fmt.Errorf("no credentials provided")
@@ -431,7 +431,7 @@ func (o *DrOidcIamOptions) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create AWS config: %w", err)
 	}
-	retryerFn := awsutil.NewConfigV2()
+	retryerFn := awsutil.NewConfig()
 	iamClient := iam.NewFromConfig(*iamCfg, func(o *iam.Options) {
 		o.Retryer = retryerFn()
 	})

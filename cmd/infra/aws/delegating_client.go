@@ -28,7 +28,7 @@ func NewDelegatingClient(
 	nodePoolCredentialsFile string,
 	openshiftImageRegistryCredentialsFile string,
 ) (*DelegatingClient, error) {
-	awsConfigv2 := awsutil.NewConfigV2()
+	awsConfig := awsutil.NewConfig()
 	awsEbsCsiDriverControllerCfg, err := config.LoadDefaultConfig(ctx,
 		config.WithSharedConfigFiles([]string{awsEbsCsiDriverControllerCredentialsFile}),
 		config.WithAPIOptions([]func(*middleware.Stack) error{
@@ -39,7 +39,7 @@ func NewDelegatingClient(
 	}
 	awsEbsCsiDriverController := &awsEbsCsiDriverControllerClientDelegate{
 		ec2Client: ec2.NewFromConfig(awsEbsCsiDriverControllerCfg, func(o *ec2.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 	}
 	cloudControllerCfg, err := config.LoadDefaultConfig(ctx,
@@ -52,13 +52,13 @@ func NewDelegatingClient(
 	}
 	cloudController := &cloudControllerClientDelegate{
 		ec2Client: ec2.NewFromConfig(cloudControllerCfg, func(o *ec2.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 		elasticloadbalancingClient: elasticloadbalancing.NewFromConfig(cloudControllerCfg, func(o *elasticloadbalancing.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 		elasticloadbalancingv2Client: elasticloadbalancingv2.NewFromConfig(cloudControllerCfg, func(o *elasticloadbalancingv2.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 	}
 	cloudNetworkConfigControllerCfg, err := config.LoadDefaultConfig(ctx,
@@ -71,7 +71,7 @@ func NewDelegatingClient(
 	}
 	cloudNetworkConfigController := &cloudNetworkConfigControllerClientDelegate{
 		ec2Client: ec2.NewFromConfig(cloudNetworkConfigControllerCfg, func(o *ec2.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 	}
 	controlPlaneOperatorCfg, err := config.LoadDefaultConfig(ctx,
@@ -84,10 +84,10 @@ func NewDelegatingClient(
 	}
 	controlPlaneOperator := &controlPlaneOperatorClientDelegate{
 		ec2Client: ec2.NewFromConfig(controlPlaneOperatorCfg, func(o *ec2.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 		route53Client: route53.NewFromConfig(controlPlaneOperatorCfg, func(o *route53.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 	}
 	nodePoolCfg, err := config.LoadDefaultConfig(ctx,
@@ -100,10 +100,10 @@ func NewDelegatingClient(
 	}
 	nodePool := &nodePoolClientDelegate{
 		ec2Client: ec2.NewFromConfig(nodePoolCfg, func(o *ec2.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 		sqsClient: sqs.NewFromConfig(nodePoolCfg, func(o *sqs.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 	}
 	openshiftImageRegistryCfg, err := config.LoadDefaultConfig(ctx,
@@ -116,7 +116,7 @@ func NewDelegatingClient(
 	}
 	openshiftImageRegistry := &openshiftImageRegistryClientDelegate{
 		s3Client: s3.NewFromConfig(openshiftImageRegistryCfg, func(o *s3.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 	}
 	return &DelegatingClient{

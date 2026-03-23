@@ -15,7 +15,7 @@ import (
 	"github.com/aws/smithy-go/middleware"
 )
 
-func NewSTSSessionV2(ctx context.Context, agent, roleArn, region string, assumeRoleCreds *awsv2.Credentials) (*awsv2.Config, error) {
+func NewSTSSession(ctx context.Context, agent, roleArn, region string, assumeRoleCreds *awsv2.Credentials) (*awsv2.Config, error) {
 	if assumeRoleCreds == nil {
 		return nil, fmt.Errorf("assumeRoleCreds cannot be nil")
 	}
@@ -64,8 +64,8 @@ type STSCreds struct {
 	Credentials Credentials `json:"Credentials"`
 }
 
-// ParseSTSCredentialsFileV2 parses STS credentials file and returns v2 credentials
-func ParseSTSCredentialsFileV2(credentialsFile string) (*awsv2.Credentials, error) {
+// ParseSTSCredentialsFile parses an STS credentials file and returns credentials.
+func ParseSTSCredentialsFile(credentialsFile string) (*awsv2.Credentials, error) {
 	var stsCreds STSCreds
 
 	rawSTSCreds, err := os.ReadFile(credentialsFile)

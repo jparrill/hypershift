@@ -200,42 +200,42 @@ func (o *DestroyInfraOptions) DestroyInfra(ctx context.Context) error {
 	var s3Client awsapi.S3API
 	var ramClient *ram.Client
 	if o.AWSCredentialsOpts.AWSCredentialsOpts.AWSCredentialsFile != "" || o.AWSCredentialsOpts.AWSCredentialsOpts.STSCredentialsFile != "" {
-		awsSessionv2, err := o.AWSCredentialsOpts.AWSCredentialsOpts.GetSessionV2(ctx, "cli-destroy-infra", o.CredentialsSecretData, o.Region)
+		awsSession, err := o.AWSCredentialsOpts.AWSCredentialsOpts.GetSession(ctx, "cli-destroy-infra", o.CredentialsSecretData, o.Region)
 		if err != nil {
 			return err
 		}
-		awsConfigv2 := awsutil.NewConfigV2()
-		ec2Client = ec2.NewFromConfig(*awsSessionv2, func(o *ec2.Options) {
-			o.Retryer = awsConfigv2()
+		awsConfig := awsutil.NewConfig()
+		ec2Client = ec2.NewFromConfig(*awsSession, func(o *ec2.Options) {
+			o.Retryer = awsConfig()
 		})
 		vpcOwnerEC2Client = ec2Client
-		elbClient = elb.NewFromConfig(*awsSessionv2, func(o *elb.Options) {
-			o.Retryer = awsConfigv2()
+		elbClient = elb.NewFromConfig(*awsSession, func(o *elb.Options) {
+			o.Retryer = awsConfig()
 		})
-		elbv2Client = elbv2.NewFromConfig(*awsSessionv2, func(o *elbv2.Options) {
-			o.Retryer = awsConfigv2()
+		elbv2Client = elbv2.NewFromConfig(*awsSession, func(o *elbv2.Options) {
+			o.Retryer = awsConfig()
 		})
-		route53Configv2 := awsutil.NewRoute53ConfigV2()
-		clusterRoute53Client = route53.NewFromConfig(*awsSessionv2, func(o *route53.Options) {
-			o.Retryer = route53Configv2()
+		route53Config := awsutil.NewRoute53Config()
+		clusterRoute53Client = route53.NewFromConfig(*awsSession, func(o *route53.Options) {
+			o.Retryer = route53Config()
 		})
-		s3Client = s3.NewFromConfig(*awsSessionv2, func(o *s3.Options) {
-			o.Retryer = awsConfigv2()
+		s3Client = s3.NewFromConfig(*awsSession, func(o *s3.Options) {
+			o.Retryer = awsConfig()
 		})
 
 		if o.VPCOwnerCredentialsOpts.AWSCredentialsFile != "" {
-			vpcOwnerSessionv2, err := o.VPCOwnerCredentialsOpts.GetSessionV2(ctx, "cli-destroy-infra", nil, o.Region)
+			vpcOwnerSession, err := o.VPCOwnerCredentialsOpts.GetSession(ctx, "cli-destroy-infra", nil, o.Region)
 			if err != nil {
 				return err
 			}
-			vpcOwnerEC2Client = ec2.NewFromConfig(*vpcOwnerSessionv2, func(o *ec2.Options) {
-				o.Retryer = awsConfigv2()
+			vpcOwnerEC2Client = ec2.NewFromConfig(*vpcOwnerSession, func(o *ec2.Options) {
+				o.Retryer = awsConfig()
 			})
-			vpcOwnerRoute53Client = route53.NewFromConfig(*vpcOwnerSessionv2, func(o *route53.Options) {
-				o.Retryer = route53Configv2()
+			vpcOwnerRoute53Client = route53.NewFromConfig(*vpcOwnerSession, func(o *route53.Options) {
+				o.Retryer = route53Config()
 			})
-			ramClient = ram.NewFromConfig(*vpcOwnerSessionv2, func(o *ram.Options) {
-				o.Retryer = awsutil.NewConfigV2()()
+			ramClient = ram.NewFromConfig(*vpcOwnerSession, func(o *ram.Options) {
+				o.Retryer = awsutil.NewConfig()()
 			})
 		}
 

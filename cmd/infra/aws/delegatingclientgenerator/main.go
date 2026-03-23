@@ -91,7 +91,7 @@ func NewDelegatingClient (
 	{{$name | ToName}}CredentialsFile string,
 {{- end}}
 ) (*DelegatingClient, error) {
-	awsConfigv2 := awsutil.NewConfigV2()
+	awsConfig := awsutil.NewConfig()
 {{- range $name := $.Delegates }}
 	{{- with $services := $name | index $.DelegatesByName }}
 	{{$name | ToName}}Cfg, err := config.LoadDefaultConfig(ctx,
@@ -105,7 +105,7 @@ func NewDelegatingClient (
 	{{$name | ToName}} := &{{$name | ToName}}ClientDelegate{
 {{- range $service, $apis := $services }}
 		{{$service}}Client: {{$service}}.NewFromConfig({{$name | ToName}}Cfg, func(o *{{$service}}.Options) {
-			o.Retryer = awsConfigv2()
+			o.Retryer = awsConfig()
 		}),
 {{- end}}
 	}

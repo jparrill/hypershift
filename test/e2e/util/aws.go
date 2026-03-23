@@ -30,8 +30,8 @@ func GetKMSKeyArn(ctx context.Context, awsCreds, awsRegion, alias string) (*stri
 		return aws.String(""), nil
 	}
 
-	awsSession := awsutil.NewSessionV2(ctx, "e2e-kms", awsCreds, "", "", awsRegion)
-	awsConfig := awsutil.NewConfigV2()
+	awsSession := awsutil.NewSession(ctx, "e2e-kms", awsCreds, "", "", awsRegion)
+	awsConfig := awsutil.NewConfig()
 	kmsClient := kms.NewFromConfig(*awsSession, func(o *kms.Options) {
 		o.Retryer = awsConfig()
 	})
@@ -51,8 +51,8 @@ func GetKMSKeyArn(ctx context.Context, awsCreds, awsRegion, alias string) (*stri
 }
 
 func GetDefaultSecurityGroup(ctx context.Context, awsCreds, awsRegion, sgID string) (*ec2types.SecurityGroup, error) {
-	awsSession := awsutil.NewSessionV2(ctx, "e2e-ec2", awsCreds, "", "", awsRegion)
-	awsConfig := awsutil.NewConfigV2()
+	awsSession := awsutil.NewSession(ctx, "e2e-ec2", awsCreds, "", "", awsRegion)
+	awsConfig := awsutil.NewConfig()
 	ec2Client := ec2.NewFromConfig(*awsSession, func(o *ec2.Options) {
 		o.Retryer = awsConfig()
 	})
@@ -70,24 +70,24 @@ func GetDefaultSecurityGroup(ctx context.Context, awsCreds, awsRegion, sgID stri
 }
 
 func GetS3Client(ctx context.Context, awsCreds, awsRegion string) awsapi.S3API {
-	awsSessionv2 := awsutil.NewSessionV2(ctx, "e2e-s3", awsCreds, "", "", awsRegion)
-	awsConfigv2 := awsutil.NewConfigV2()
-	return s3.NewFromConfig(*awsSessionv2, func(o *s3.Options) {
-		o.Retryer = awsConfigv2()
+	awsSession := awsutil.NewSession(ctx, "e2e-s3", awsCreds, "", "", awsRegion)
+	awsConfig := awsutil.NewConfig()
+	return s3.NewFromConfig(*awsSession, func(o *s3.Options) {
+		o.Retryer = awsConfig()
 	})
 }
 
 func GetIAMClient(ctx context.Context, awsCreds, awsRegion string) awsapi.IAMAPI {
-	awsSession := awsutil.NewSessionV2(ctx, "e2e-iam", awsCreds, "", "", awsRegion)
-	awsConfig := awsutil.NewConfigV2()
+	awsSession := awsutil.NewSession(ctx, "e2e-iam", awsCreds, "", "", awsRegion)
+	awsConfig := awsutil.NewConfig()
 	return iam.NewFromConfig(*awsSession, func(o *iam.Options) {
 		o.Retryer = awsConfig()
 	})
 }
 
 func GetSQSClient(ctx context.Context, awsCreds, awsRegion string) awsapi.SQSAPI {
-	awsSession := awsutil.NewSessionV2(ctx, "e2e-sqs", awsCreds, "", "", awsRegion)
-	awsConfig := awsutil.NewConfigV2()
+	awsSession := awsutil.NewSession(ctx, "e2e-sqs", awsCreds, "", "", awsRegion)
+	awsConfig := awsutil.NewConfig()
 	return sqs.NewFromConfig(*awsSession, func(o *sqs.Options) {
 		o.Retryer = awsConfig()
 	})
