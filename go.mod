@@ -20,7 +20,6 @@ require (
 	github.com/IBM/platform-services-go-sdk v0.81.0
 	github.com/IBM/vpc-go-sdk v0.68.0
 	github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5
-	github.com/aws/aws-sdk-go v1.55.8
 	github.com/aws/aws-sdk-go-v2 v1.41.2
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
