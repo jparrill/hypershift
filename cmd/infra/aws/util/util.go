@@ -10,21 +10,12 @@ import (
 
 	"github.com/openshift/hypershift/cmd/util"
 
-	// AWS SDK v2
 	awsv2 "github.com/aws/aws-sdk-go-v2/aws"
 	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	configv2 "github.com/aws/aws-sdk-go-v2/config"
 	credentialsv2 "github.com/aws/aws-sdk-go-v2/credentials"
-	// AWS SDK v1
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/client"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/smithy-go/middleware"
-
-	"k8s.io/utils/ptr"
 
 	"github.com/spf13/pflag"
 )
@@ -70,32 +61,6 @@ func (opts *AWSCredentialsOptions) BindProductFlags(flags *pflag.FlagSet) {
 	flags.StringVar(&opts.STSCredentialsFile, "sts-creds", opts.STSCredentialsFile, "Path to the STS credentials file to use when assuming the role. Can be generated with 'aws sts get-session-token --output json'")
 }
 
-func (opts *AWSCredentialsOptions) GetSession(agent string, secretData *util.CredentialsSecretData, region string) (*session.Session, error) {
-	if opts.AWSCredentialsFile != "" {
-		return NewSession(agent, opts.AWSCredentialsFile, "", "", region), nil
-	}
-
-	if opts.STSCredentialsFile != "" {
-		creds, err := ParseSTSCredentialsFile(opts.STSCredentialsFile)
-		if err != nil {
-			return nil, err
-		}
-
-		return NewSTSSession(agent, opts.RoleArn, region, creds)
-	}
-
-	if secretData != nil {
-		creds := credentials.NewStaticCredentials(
-			secretData.AWSAccessKeyID,
-			secretData.AWSSecretAccessKey,
-			secretData.AWSSessionToken,
-		)
-		return NewSTSSession(agent, opts.RoleArn, region, creds)
-	}
-
-	return nil, errors.New("could not create AWS session, no credentials were given")
-}
-
 func (opts *AWSCredentialsOptions) GetSessionV2(ctx context.Context, agent string, secretData *util.CredentialsSecretData, region string) (*awsv2.Config, error) {
 	if opts.AWSCredentialsFile != "" {
 		return NewSessionV2(ctx, agent, opts.AWSCredentialsFile, "", "", region), nil
@@ -122,25 +87,6 @@ func (opts *AWSCredentialsOptions) GetSessionV2(ctx context.Context, agent strin
 	}
 
 	return nil, errors.New("could not create AWS session, no credentials were given")
-}
-
-func NewSession(agent, credentialsFile, credKey, credSecretKey, region string) *session.Session {
-	sessionOpts := session.Options{}
-	if credentialsFile != "" {
-		sessionOpts.SharedConfigFiles = append(sessionOpts.SharedConfigFiles, credentialsFile)
-	}
-	if credKey != "" && credSecretKey != "" {
-		sessionOpts.Config.Credentials = credentials.NewStaticCredentials(credKey, credSecretKey, "")
-	}
-	if region != "" {
-		sessionOpts.Config.Region = ptr.To(region)
-	}
-	awsSession := session.Must(session.NewSessionWithOptions(sessionOpts))
-	awsSession.Handlers.Build.PushBackNamed(request.NamedHandler{
-		Name: "openshift.io/hypershift",
-		Fn:   request.MakeAddToUserAgentHandler("openshift.io hypershift", agent),
-	})
-	return awsSession
 }
 
 func NewSessionV2(ctx context.Context, agent, credentialsFile, credKey, credSecretKey, region string) *awsv2.Config {
@@ -178,18 +124,6 @@ func NewRoute53ConfigV2() func() awsv2.Retryer {
 			o.Backoff = retry.NewExponentialJitterBackoff(30 * time.Second) // Higher cap for Route53 throttling
 		})
 	}
-}
-
-// NewConfig creates a new config.
-func NewConfig() *aws.Config {
-
-	awsConfig := aws.NewConfig()
-	awsConfig.Retryer = client.DefaultRetryer{
-		NumMaxRetries:    10,
-		MinRetryDelay:    5 * time.Second,
-		MinThrottleDelay: 5 * time.Second,
-	}
-	return awsConfig
 }
 
 // NewConfigV2 creates a v2 retryer function with the same retry configuration as NewConfig
