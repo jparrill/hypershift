@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -451,6 +452,20 @@ func (r *Reconciler) reconcileHCPRouterServices(ctx context.Context, hcp *hyperv
 		return nil
 	}
 
+	// ARO HCP doesn't need LB services; Swift handles connectivity.
+	// Only reconcile a ClusterIP private router service.
+	if hyperazureutil.IsAroHCP() {
+		if _, err := util.DeleteIfNeeded(ctx, r.Client, pubSvc); err != nil {
+			return fmt.Errorf("failed to delete public router service: %w", err)
+		}
+		if _, err := createOrUpdate(ctx, r.Client, privSvc, func() error {
+			return reconcileAROPrivateRouterService(privSvc, hcp)
+		}); err != nil {
+			return fmt.Errorf("failed to reconcile private router service: %w", err)
+		}
+		return nil
+	}
+
 	// Create the Service type LB internal for private endpoints.
 	if util.IsPrivateHCP(hcp) {
 		if _, err := createOrUpdate(ctx, r.Client, privSvc, func() error {
@@ -476,6 +491,30 @@ func (r *Reconciler) reconcileHCPRouterServices(ctx context.Context, hcp *hyperv
 		if _, err := util.DeleteIfNeeded(ctx, r.Client, pubSvc); err != nil {
 			return fmt.Errorf("failed to delete public router service: %w", err)
 		}
+	}
+	return nil
+}
+
+func reconcileAROPrivateRouterService(svc *corev1.Service, hcp *hyperv1.HostedControlPlane) error {
+	svc.Labels = map[string]string{"app": "private-router"}
+	svc.Spec.Type = corev1.ServiceTypeClusterIP
+	svc.Spec.Selector = map[string]string{"app": "private-router"}
+	foundHTTPS := false
+	for i, port := range svc.Spec.Ports {
+		if port.Name == "https" {
+			svc.Spec.Ports[i].Port = 443
+			svc.Spec.Ports[i].TargetPort = intstr.FromString("https")
+			svc.Spec.Ports[i].Protocol = corev1.ProtocolTCP
+			foundHTTPS = true
+		}
+	}
+	if !foundHTTPS {
+		svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{
+			Name:       "https",
+			Port:       443,
+			TargetPort: intstr.FromString("https"),
+			Protocol:   corev1.ProtocolTCP,
+		})
 	}
 	return nil
 }

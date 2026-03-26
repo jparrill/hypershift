@@ -1450,6 +1450,42 @@ func TestReconcileHCPRouterServices(t *testing.T) {
 				hcp.Spec.Platform.AWS = nil
 			},
 		},
+		{
+			name:                         "When ARO with Swift is enabled it should create only a ClusterIP private router service",
+			endpointAccess:               hyperv1.Public,
+			exposeAPIServerThroughRouter: true,
+			expectedServices: []corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "private-router",
+						Namespace: namespace,
+						Labels:    map[string]string{"app": "private-router"},
+					},
+					Spec: corev1.ServiceSpec{
+						Type:     corev1.ServiceTypeClusterIP,
+						Selector: map[string]string{"app": "private-router"},
+						Ports: []corev1.ServicePort{
+							{
+								Name:       "https",
+								Port:       443,
+								TargetPort: intstr.FromString("https"),
+								Protocol:   corev1.ProtocolTCP,
+							},
+						},
+					},
+				},
+			},
+			setupEnv: func(t *testing.T) {
+				t.Setenv("MANAGED_SERVICE", hyperv1.AroHCP)
+			},
+			hcpModifier: func(hcp *hyperv1.HostedControlPlane) {
+				hcp.Spec.Platform.Type = hyperv1.AzurePlatform
+				hcp.Spec.Platform.AWS = nil
+				hcp.Annotations = map[string]string{
+					hyperv1.SwiftPodNetworkInstanceAnnotation: "swift-network-instance",
+				}
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
