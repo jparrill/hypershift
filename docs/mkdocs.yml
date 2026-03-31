@@ -346,6 +346,7 @@ nav:
   - reference/SLOs.md
   - reference/versioning-support.md
   - reference/service-publishing-strategies.md
+  - 'Onboarding Guide': reference/onboarding-guide.md
 - 'Contribute':
   - contribute/index.md
   - 'HO/CPO Release Process': contribute/release-process.md
