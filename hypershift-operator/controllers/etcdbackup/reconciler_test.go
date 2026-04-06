@@ -370,24 +370,16 @@ func TestReconcile(t *testing.T) {
 		g.Expect(result).To(Equal(ctrl.Result{}))
 	})
 
-	t.Run("When credential Secret does not exist it should set BackupFailed", func(t *testing.T) {
+	t.Run("When credential Secret does not exist it should set BackupFailed without creating RBAC or NetworkPolicy", func(t *testing.T) {
 		g := NewGomegaWithT(t)
 		backup := newHCPEtcdBackup()
 		hcp := newHostedControlPlane()
 		sts := newEtcdStatefulSet(3, 3)
-		pullSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      pullSecretName,
-				Namespace: testHCPNamespace,
-			},
-			Data: map[string][]byte{
-				corev1.DockerConfigJsonKey: []byte(`{"auths":{}}`),
-			},
-		}
-		// No credential secret — should trigger BackupFailed
-		r := newReconciler(backup, hcp, sts, pullSecret)
+		// No credential secret — should trigger BackupFailed before creating any resources
+		r := newReconciler(backup, hcp, sts)
+		ctx := context.Background()
 
-		result, err := r.Reconcile(context.Background(), ctrl.Request{
+		result, err := r.Reconcile(ctx, ctrl.Request{
 			NamespacedName: types.NamespacedName{
 				Name:      testBackupName,
 				Namespace: testHCPNamespace,
@@ -397,12 +389,17 @@ func TestReconcile(t *testing.T) {
 		g.Expect(result).To(Equal(ctrl.Result{}))
 
 		updated := &hyperv1.HCPEtcdBackup{}
-		g.Expect(r.Get(context.Background(), types.NamespacedName{Name: testBackupName, Namespace: testHCPNamespace}, updated)).To(Succeed())
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: testBackupName, Namespace: testHCPNamespace}, updated)).To(Succeed())
 		g.Expect(updated.Status.Conditions).To(HaveLen(1))
 		g.Expect(updated.Status.Conditions[0].Type).To(Equal(string(hyperv1.BackupCompleted)))
 		g.Expect(updated.Status.Conditions[0].Status).To(Equal(metav1.ConditionFalse))
 		g.Expect(updated.Status.Conditions[0].Reason).To(Equal(hyperv1.BackupFailedReason))
 		g.Expect(updated.Status.Conditions[0].Message).To(ContainSubstring("credential Secret"))
+
+		// Verify no RBAC or NetworkPolicy was created (early validation prevents resource waste)
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: RBACName, Namespace: testHCPNamespace}, &rbacv1.Role{})).ToNot(Succeed())
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: RBACName, Namespace: testHCPNamespace}, &rbacv1.RoleBinding{})).ToNot(Succeed())
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: NetworkPolicyName, Namespace: testHCPNamespace}, &networkingv1.NetworkPolicy{})).ToNot(Succeed())
 	})
 
 	t.Run("When backup failed it should be terminal", func(t *testing.T) {
@@ -1059,7 +1056,7 @@ func TestCreateBackupJob(t *testing.T) {
 		g.Expect(upload.Command).To(ContainElements("--aws-region", "us-east-1"))
 	})
 
-	t.Run("When credential Secret does not exist it should return an error", func(t *testing.T) {
+	t.Run("When credential Secret does not exist the Job should still be created", func(t *testing.T) {
 		g := NewGomegaWithT(t)
 		backup := newHCPEtcdBackup()
 		hcp := newHostedControlPlane()
@@ -1072,14 +1069,20 @@ func TestCreateBackupJob(t *testing.T) {
 				corev1.DockerConfigJsonKey: []byte(`{"auths":{}}`),
 			},
 		}
-		// No credential secret created
+		// No credential secret — createBackupJob does not validate it;
+		// validation is done earlier in Reconcile via getCredentialSecretName + Get.
 		r := newReconciler(backup, hcp, pullSecret)
 		ctx := context.Background()
 
 		err := r.createBackupJob(ctx, backup, hcp)
-		g.Expect(err).To(HaveOccurred())
-		g.Expect(err.Error()).To(ContainSubstring("credential Secret"))
-		g.Expect(err.Error()).To(ContainSubstring("aws-creds"))
+		g.Expect(err).ToNot(HaveOccurred())
+
+		jobList := &batchv1.JobList{}
+		g.Expect(r.List(ctx, jobList, client.InNamespace(testHONamespace))).To(Succeed())
+		g.Expect(jobList.Items).To(HaveLen(1))
+		// The Job references the credential Secret in its volume — Kubernetes will
+		// fail the Pod at runtime if it doesn't exist, but that's caught by Reconcile.
+		g.Expect(jobList.Items[0].Spec.Template.Spec.Volumes[2].Secret.SecretName).To(Equal("aws-creds"))
 	})
 
 	t.Run("When storage type is AzureBlob it should build correct Azure upload args", func(t *testing.T) {
