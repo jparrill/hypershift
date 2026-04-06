@@ -195,6 +195,11 @@ const (
 	// recovery job was triggered.
 	EtcdRecoveryActive ConditionType = "EtcdRecoveryActive"
 
+	// EtcdBackupSucceeded bubbles up from HCP. It indicates the result of the
+	// most recent etcd backup. True means the last backup completed successfully;
+	// False means a backup is in progress or the last backup failed.
+	EtcdBackupSucceeded ConditionType = "EtcdBackupSucceeded"
+
 	// ClusterSizeComputed indicates that a t-shirt size was computed for this HostedCluster.
 	// The last transition time for this condition is used to manage how quickly transitions occur.
 	ClusterSizeComputed = "ClusterSizeComputed"

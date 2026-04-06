@@ -27,6 +27,7 @@ import (
 	pkiconfig "github.com/openshift/hypershift/control-plane-pki-operator/config"
 	etcdrecovery "github.com/openshift/hypershift/etcd-recovery"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/auditlogpersistence"
+	"github.com/openshift/hypershift/hypershift-operator/controllers/etcdbackup"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster"
 	hcmetrics "github.com/openshift/hypershift/hypershift-operator/controllers/hostedcluster/metrics"
 	"github.com/openshift/hypershift/hypershift-operator/controllers/hostedclustersizing"
@@ -138,6 +139,7 @@ type StartOptions struct {
 	EnableDedicatedRequestServingIsolation bool
 	ScaleFromZeroProvider                  string
 	ScaleFromZeroCreds                     string
+	EtcdBackupMaxCount                     int
 }
 
 func NewStartCommand() *cobra.Command {
@@ -176,6 +178,7 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.EnableDedicatedRequestServingIsolation, "enable-dedicated-request-serving-isolation", true, "If true, enables scheduling of request serving components to dedicated nodes")
 	cmd.Flags().StringVar(&opts.ScaleFromZeroProvider, "scale-from-zero-provider", opts.ScaleFromZeroProvider, "Platform type for scale-from-zero autoscaling (aws)")
 	cmd.Flags().StringVar(&opts.ScaleFromZeroCreds, "scale-from-zero-creds", opts.ScaleFromZeroCreds, "Path to credentials file for scale-from-zero instance type queries")
+	cmd.Flags().IntVar(&opts.EtcdBackupMaxCount, "etcd-backup-max-count", 5, "Maximum number of completed HCPEtcdBackup CRs to retain per HostedControlPlane")
 
 	// Attempt to determine featureset prior to adding featuregate flags.
 	// It is safe to get the empty string from this as the empty string is the default featureset.
@@ -211,6 +214,10 @@ func NewStartCommand() *cobra.Command {
 
 func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 	log.Info("Starting hypershift-operator-manager", "version", supportedversion.String())
+
+	if opts.EtcdBackupMaxCount < 1 {
+		return fmt.Errorf("--etcd-backup-max-count must be at least 1, got %d", opts.EtcdBackupMaxCount)
+	}
 
 	// Validate scale-from-zero configuration early
 	supportedProviders := set.New("aws")
@@ -630,6 +637,19 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		log.Info("UWM telemetry remote write controller enabled")
 	} else {
 		log.Info("UWM telemetry remote write controller disabled")
+	}
+
+	if featuregate.Gate().Enabled(featuregate.HCPEtcdBackup) {
+		etcdBackupReconciler := &etcdbackup.HCPEtcdBackupReconciler{
+			Client:                  mgr.GetClient(),
+			OperatorNamespace:       opts.Namespace,
+			ReleaseProvider:         registryProvider.ReleaseProvider,
+			HypershiftOperatorImage: operatorImage,
+			MaxBackupCount:          opts.EtcdBackupMaxCount,
+		}
+		if err := etcdBackupReconciler.SetupWithManager(mgr); err != nil {
+			return fmt.Errorf("unable to create etcd backup controller: %w", err)
+		}
 	}
 
 	if sharedingress.UseSharedIngress() {

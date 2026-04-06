@@ -5832,6 +5832,11 @@ components like the konnectivity-agent workload.
 <td><p>EtcdAvailable bubbles up the same condition from HCP. It signals if etcd is available.
 A failure here often means a software bug or a non-stable cluster.</p>
 </td>
+</tr><tr><td><p>&#34;EtcdBackupSucceeded&#34;</p></td>
+<td><p>EtcdBackupSucceeded bubbles up from HCP. It indicates the result of the
+most recent etcd backup. True means the last backup completed successfully;
+False means a backup is in progress or the last backup failed.</p>
+</td>
 </tr><tr><td><p>&#34;EtcdRecoveryActive&#34;</p></td>
 <td><p>EtcdRecoveryActive indicates that the Etcd cluster is failing and the
 recovery job was triggered.</p>
