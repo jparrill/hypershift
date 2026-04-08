@@ -402,6 +402,82 @@ func TestReconcile(t *testing.T) {
 		g.Expect(r.Get(ctx, types.NamespacedName{Name: NetworkPolicyName, Namespace: testHCPNamespace}, &networkingv1.NetworkPolicy{})).ToNot(Succeed())
 	})
 
+	t.Run("When rejected backup reconciles with active Job from another backup it should not delete shared resources", func(t *testing.T) {
+		g := NewGomegaWithT(t)
+
+		// Rejected backup (tc4b in the QE scenario)
+		rejectedBackup := newHCPEtcdBackup()
+		rejectedBackup.Name = "pr8139-tc4b"
+		rejectedBackup.Status.Conditions = []metav1.Condition{
+			{
+				Type:               string(hyperv1.BackupCompleted),
+				Status:             metav1.ConditionFalse,
+				Reason:             hyperv1.BackupRejectedReason,
+				Message:            "rejected: another backup Job is already running",
+				LastTransitionTime: metav1.Now(),
+			},
+		}
+
+		// Active Job from the first backup (tc4a)
+		activeJob := &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "etcd-backup-pr8139-tc4a-xyz",
+				Namespace: testHONamespace,
+				Labels: map[string]string{
+					LabelApp:          LabelName,
+					LabelBackupName:   "pr8139-tc4a",
+					LabelHCPNamespace: testHCPNamespace,
+				},
+			},
+			Spec: batchv1.JobSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers:    []corev1.Container{{Name: "test", Image: "test:latest"}},
+						RestartPolicy: corev1.RestartPolicyNever,
+					},
+				},
+			},
+			Status: batchv1.JobStatus{Active: 1},
+		}
+
+		// Shared resources created by tc4a
+		np := &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      NetworkPolicyName,
+				Namespace: testHCPNamespace,
+			},
+		}
+		role := &rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      RBACName,
+				Namespace: testHCPNamespace,
+			},
+		}
+		rb := &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      RBACName,
+				Namespace: testHCPNamespace,
+			},
+		}
+
+		r := newReconciler(rejectedBackup, activeJob, np, role, rb)
+		ctx := context.Background()
+
+		result, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "pr8139-tc4b",
+				Namespace: testHCPNamespace,
+			},
+		})
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(result).To(Equal(ctrl.Result{}))
+
+		// Shared resources must still exist — the active Job needs them
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: NetworkPolicyName, Namespace: testHCPNamespace}, &networkingv1.NetworkPolicy{})).To(Succeed())
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: RBACName, Namespace: testHCPNamespace}, &rbacv1.Role{})).To(Succeed())
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: RBACName, Namespace: testHCPNamespace}, &rbacv1.RoleBinding{})).To(Succeed())
+	})
+
 	t.Run("When backup failed it should be terminal", func(t *testing.T) {
 		g := NewGomegaWithT(t)
 		backup := newHCPEtcdBackup()
@@ -589,6 +665,66 @@ func TestCleanupResources(t *testing.T) {
 
 		err := r.cleanupResources(ctx, backup)
 		g.Expect(err).ToNot(HaveOccurred())
+	})
+
+	t.Run("When another backup Job is active it should skip cleanup", func(t *testing.T) {
+		g := NewGomegaWithT(t)
+		backup := newHCPEtcdBackup()
+
+		// Resources that should NOT be deleted
+		np := &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      NetworkPolicyName,
+				Namespace: testHCPNamespace,
+			},
+		}
+		role := &rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      RBACName,
+				Namespace: testHCPNamespace,
+			},
+		}
+		rb := &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      RBACName,
+				Namespace: testHCPNamespace,
+			},
+		}
+
+		// Active Job from another backup in the same HCP namespace
+		activeJob := &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "etcd-backup-other-backup",
+				Namespace: testHONamespace,
+				Labels: map[string]string{
+					LabelApp:          LabelName,
+					LabelBackupName:   "other-backup",
+					LabelHCPNamespace: testHCPNamespace,
+				},
+			},
+			Spec: batchv1.JobSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers:    []corev1.Container{{Name: "test", Image: "test:latest"}},
+						RestartPolicy: corev1.RestartPolicyNever,
+					},
+				},
+			},
+			Status: batchv1.JobStatus{
+				Active: 1,
+			},
+		}
+
+		r := newReconciler(backup, np, role, rb, activeJob)
+		ctx := context.Background()
+
+		err := r.cleanupResources(ctx, backup)
+		g.Expect(err).ToNot(HaveOccurred())
+
+		// All resources should still exist
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: NetworkPolicyName, Namespace: testHCPNamespace}, &networkingv1.NetworkPolicy{})).To(Succeed())
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: RBACName, Namespace: testHCPNamespace}, &rbacv1.Role{})).To(Succeed())
+		g.Expect(r.Get(ctx, types.NamespacedName{Name: RBACName, Namespace: testHCPNamespace}, &rbacv1.RoleBinding{})).To(Succeed())
 	})
 }
 

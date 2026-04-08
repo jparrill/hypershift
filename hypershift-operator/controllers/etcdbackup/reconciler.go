@@ -253,6 +253,18 @@ func (r *HCPEtcdBackupReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if err := r.createBackupJob(ctx, backup, hcp); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.setCondition(backup, metav1.Condition{
+				Type:    string(hyperv1.BackupCompleted),
+				Status:  metav1.ConditionFalse,
+				Reason:  hyperv1.BackupFailedReason,
+				Message: err.Error(),
+			})
+			if statusErr := r.Status().Update(ctx, backup); statusErr != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to update status: %w", statusErr)
+			}
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{}, fmt.Errorf("failed to create backup Job: %w", err)
 	}
 
@@ -624,8 +636,21 @@ func (r *HCPEtcdBackupReconciler) ensureNetworkPolicy(ctx context.Context, backu
 }
 
 // cleanupResources removes temporary NetworkPolicy and RBAC from the HCP namespace.
+// It skips deletion if another backup Job is still active in the same HCP namespace,
+// because the shared resources (NetworkPolicy, RBAC) are needed by that Job.
 func (r *HCPEtcdBackupReconciler) cleanupResources(ctx context.Context, backup *hyperv1.HCPEtcdBackup) error {
 	logger := log.FromContext(ctx)
+
+	// Guard: don't delete shared resources while another backup Job is active.
+	activeJob, err := r.findActiveJob(ctx, backup.Namespace)
+	if err != nil {
+		return fmt.Errorf("failed to check for active jobs before cleanup: %w", err)
+	}
+	if activeJob != nil {
+		logger.Info("skipping cleanup: another backup Job is still active", "activeJob", activeJob.Name)
+		return nil
+	}
+
 	var firstErr error
 
 	// Delete NetworkPolicy
