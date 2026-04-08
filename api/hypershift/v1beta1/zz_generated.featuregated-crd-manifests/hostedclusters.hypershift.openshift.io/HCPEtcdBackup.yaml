@@ -6688,6 +6688,18 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              lastSuccessfulEtcdBackupURL:
+                description: |-
+                  lastSuccessfulEtcdBackupURL is the cloud storage URL of the most recent
+                  successful etcd backup snapshot. Persisted here because HCPEtcdBackup CRs
+                  are ephemeral and may be deleted by retention policies.
+                maxLength: 2048
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: lastSuccessfulEtcdBackupURL must be a valid URL with scheme
+                    https or s3
+                  rule: self.matches('^(https|s3)://.*')
               oauthCallbackURLTemplate:
                 description: |-
                   oauthCallbackURLTemplate contains a template for the URL to use as a callback

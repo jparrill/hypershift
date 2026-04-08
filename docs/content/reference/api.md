@@ -9454,6 +9454,20 @@ ConfigurationStatus
 <p>configuration contains the cluster configuration status of the HostedCluster</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>lastSuccessfulEtcdBackupURL</code></br>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>lastSuccessfulEtcdBackupURL is the cloud storage URL of the most recent
+successful etcd backup snapshot. Persisted here because HCPEtcdBackup CRs
+are ephemeral and may be deleted by retention policies.</p>
+</td>
+</tr>
 </tbody>
 </table>
 ###HostedControlPlaneSpec { #hypershift.openshift.io/v1beta1.HostedControlPlaneSpec }
