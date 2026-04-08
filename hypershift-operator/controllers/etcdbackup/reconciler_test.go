@@ -12,6 +12,7 @@ import (
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/hypershift/hypershift-operator/featuregate"
 	"github.com/openshift/hypershift/support/releaseinfo"
+	hyperutil "github.com/openshift/hypershift/support/util"
 
 	configv1 "github.com/openshift/api/config/v1"
 	imageapi "github.com/openshift/api/image/v1"
@@ -21,15 +22,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestMain(m *testing.M) {
@@ -42,6 +46,8 @@ const (
 	testHONamespace  = "hypershift"
 	testBackupName   = "backup-1"
 	testHCPName      = "test-hcp"
+	testHCNamespace  = "clusters"
+	testHCName       = "test"
 	testReleaseImage = "quay.io/openshift-release-dev/ocp-release:4.16.0-x86_64"
 )
 
@@ -63,7 +69,7 @@ func newReconciler(objs ...client.Object) *HCPEtcdBackupReconciler {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(clientObjs...).
-		WithStatusSubresource(&hyperv1.HCPEtcdBackup{}, &hyperv1.HostedControlPlane{}).
+		WithStatusSubresource(&hyperv1.HCPEtcdBackup{}, &hyperv1.HostedControlPlane{}, &hyperv1.HostedCluster{}).
 		Build()
 
 	return &HCPEtcdBackupReconciler{
@@ -97,11 +103,23 @@ func newHCPEtcdBackup() *hyperv1.HCPEtcdBackup {
 	}
 }
 
+func newHostedCluster() *hyperv1.HostedCluster {
+	return &hyperv1.HostedCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testHCName,
+			Namespace: testHCNamespace,
+		},
+	}
+}
+
 func newHostedControlPlane() *hyperv1.HostedControlPlane {
 	return &hyperv1.HostedControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testHCPName,
 			Namespace: testHCPNamespace,
+			Annotations: map[string]string{
+				hyperutil.HostedClusterAnnotation: testHCNamespace + "/" + testHCName,
+			},
 		},
 		Spec: hyperv1.HostedControlPlaneSpec{
 			ReleaseImage: testReleaseImage,
@@ -751,6 +769,7 @@ func TestHandleJobStatus(t *testing.T) {
 		g := NewGomegaWithT(t)
 		backup := newHCPEtcdBackup()
 		hcp := newHostedControlPlane()
+		hc := newHostedCluster()
 		job := newTestJob(batchv1.JobStatus{
 			Conditions: []batchv1.JobCondition{
 				{
@@ -786,7 +805,7 @@ func TestHandleJobStatus(t *testing.T) {
 				},
 			},
 		}
-		r := newReconciler(backup, job, hcp, pod)
+		r := newReconciler(backup, job, hcp, hc, pod)
 
 		result, err := r.handleJobStatus(context.Background(), backup, job, hcp)
 		g.Expect(err).ToNot(HaveOccurred())
@@ -805,6 +824,11 @@ func TestHandleJobStatus(t *testing.T) {
 		g.Expect(hcpCond).ToNot(BeNil())
 		g.Expect(hcpCond.Status).To(Equal(metav1.ConditionTrue))
 		g.Expect(hcpCond.Reason).To(Equal(hyperv1.BackupSucceededReason))
+
+		// Verify HostedCluster status has the snapshot URL persisted
+		updatedHC := &hyperv1.HostedCluster{}
+		g.Expect(r.Get(context.Background(), types.NamespacedName{Name: testHCName, Namespace: testHCNamespace}, updatedHC)).To(Succeed())
+		g.Expect(updatedHC.Status.LastSuccessfulEtcdBackupURL).To(Equal("s3://my-bucket/backups/test/snapshot.db"))
 	})
 
 	t.Run("When Job fails it should set BackupFailed", func(t *testing.T) {
@@ -1394,5 +1418,83 @@ func TestReconcileHappyPath(t *testing.T) {
 		g.Expect(hcpCond).ToNot(BeNil())
 		g.Expect(hcpCond.Status).To(Equal(metav1.ConditionFalse))
 		g.Expect(hcpCond.Reason).To(Equal(hyperv1.BackupInProgressReason))
+	})
+}
+
+func TestUpdateHostedClusterBackupURL(t *testing.T) {
+	t.Run("When HCP has HostedClusterAnnotation it should update HC status with snapshot URL", func(t *testing.T) {
+		g := NewGomegaWithT(t)
+		hcp := newHostedControlPlane()
+		hc := newHostedCluster()
+		r := newReconciler(hcp, hc)
+
+		err := r.updateHostedClusterBackupURL(context.Background(), hcp, "s3://bucket/snapshot.db")
+		g.Expect(err).ToNot(HaveOccurred())
+
+		updatedHC := &hyperv1.HostedCluster{}
+		g.Expect(r.Get(context.Background(), types.NamespacedName{Name: testHCName, Namespace: testHCNamespace}, updatedHC)).To(Succeed())
+		g.Expect(updatedHC.Status.LastSuccessfulEtcdBackupURL).To(Equal("s3://bucket/snapshot.db"))
+	})
+
+	t.Run("When HCP is missing HostedClusterAnnotation it should return an error", func(t *testing.T) {
+		g := NewGomegaWithT(t)
+		hcp := newHostedControlPlane()
+		hcp.Annotations = nil
+		r := newReconciler(hcp)
+
+		err := r.updateHostedClusterBackupURL(context.Background(), hcp, "s3://bucket/snapshot.db")
+		g.Expect(err).To(HaveOccurred())
+		g.Expect(err.Error()).To(ContainSubstring("missing"))
+	})
+
+	t.Run("When HostedCluster does not exist it should return an error", func(t *testing.T) {
+		g := NewGomegaWithT(t)
+		hcp := newHostedControlPlane()
+		r := newReconciler(hcp) // no HC in the fake client
+
+		err := r.updateHostedClusterBackupURL(context.Background(), hcp, "s3://bucket/snapshot.db")
+		g.Expect(err).To(HaveOccurred())
+	})
+
+	t.Run("When HC status update conflicts it should retry and succeed", func(t *testing.T) {
+		g := NewGomegaWithT(t)
+		hcp := newHostedControlPlane()
+		hc := newHostedCluster()
+
+		callCount := 0
+		s := newScheme()
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(s).
+			WithObjects(hcp, hc).
+			WithStatusSubresource(&hyperv1.HCPEtcdBackup{}, &hyperv1.HostedControlPlane{}, &hyperv1.HostedCluster{}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				SubResourceUpdate: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+					if _, ok := obj.(*hyperv1.HostedCluster); ok {
+						callCount++
+						if callCount == 1 {
+							return apierrors.NewConflict(
+								schema.GroupResource{Group: "hypershift.openshift.io", Resource: "hostedclusters"},
+								obj.GetName(),
+								fmt.Errorf("the object has been modified"),
+							)
+						}
+					}
+					return cl.Status().Update(ctx, obj, opts...)
+				},
+			}).
+			Build()
+
+		r := &HCPEtcdBackupReconciler{
+			Client:            fakeClient,
+			OperatorNamespace: testHONamespace,
+		}
+
+		err := r.updateHostedClusterBackupURL(context.Background(), hcp, "s3://bucket/snapshot.db")
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(callCount).To(Equal(2))
+
+		updatedHC := &hyperv1.HostedCluster{}
+		g.Expect(r.Get(context.Background(), types.NamespacedName{Name: testHCName, Namespace: testHCNamespace}, updatedHC)).To(Succeed())
+		g.Expect(updatedHC.Status.LastSuccessfulEtcdBackupURL).To(Equal("s3://bucket/snapshot.db"))
 	})
 }

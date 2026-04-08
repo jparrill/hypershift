@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 
@@ -317,6 +318,22 @@ func (r *HCPEtcdBackupReconciler) updateHCPBackupCondition(ctx context.Context, 
 	return r.Status().Update(ctx, hcp)
 }
 
+// updateHostedClusterBackupURL persists the snapshot URL in the HostedCluster
+// status so it survives HCPEtcdBackup CR retention/deletion.
+// Uses RetryOnConflict because the HC is updated by multiple controllers,
+// and a requeue-based retry risks losing the URL if the Pod is cleaned up
+// (TTLSecondsAfterFinished) before the next reconcile extracts it.
+func (r *HCPEtcdBackupReconciler) updateHostedClusterBackupURL(ctx context.Context, hcp *hyperv1.HostedControlPlane, snapshotURL string) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		hc, err := hyperutil.HostedClusterFromAnnotation(ctx, r.Client, hcp)
+		if err != nil {
+			return err
+		}
+		hc.Status.LastSuccessfulEtcdBackupURL = snapshotURL
+		return r.Status().Update(ctx, hc)
+	})
+}
+
 // getHostedControlPlane finds the HostedControlPlane in the given namespace.
 // Returns nil if none found.
 func (r *HCPEtcdBackupReconciler) getHostedControlPlane(ctx context.Context, namespace string) (*hyperv1.HostedControlPlane, error) {
@@ -400,9 +417,27 @@ func (r *HCPEtcdBackupReconciler) handleJobStatus(ctx context.Context, backup *h
 
 			// Extract snapshotURL from the upload container's termination message.
 			// The etcd-upload command writes the URL to /dev/termination-log.
-			if url, err := r.getSnapshotURLFromPod(ctx, job); err != nil {
+			url, err := r.getSnapshotURLFromPod(ctx, job)
+			if err != nil {
 				logger.Error(err, "failed to read snapshot URL from pod termination message")
-			} else if url != "" {
+				url = "" // don't use url on error
+			}
+
+			// Cleanup temporary RBAC and NetworkPolicy as soon as the Job completes.
+			// This must happen before any status updates that could fail and cause
+			// requeue, to avoid leaving security resources exposed indefinitely.
+			if err := r.cleanupResources(ctx, backup); err != nil {
+				logger.Error(err, "failed to cleanup resources after successful backup")
+			}
+
+			// Persist the snapshot URL in the HostedCluster status BEFORE marking
+			// the backup as terminal so the controller retries on requeue.
+			// This is idempotent: if it succeeds but the backup status update below
+			// fails, the next reconcile re-extracts the URL and writes the same value.
+			if url != "" {
+				if err := r.updateHostedClusterBackupURL(ctx, hcp, url); err != nil {
+					return ctrl.Result{}, fmt.Errorf("failed to update HostedCluster LastSuccessfulEtcdBackupURL: %w", err)
+				}
 				backup.Status.SnapshotURL = url
 			}
 
@@ -430,14 +465,16 @@ func (r *HCPEtcdBackupReconciler) handleJobStatus(ctx context.Context, backup *h
 				logger.Error(err, "failed to update HCP backup condition")
 			}
 
-			if err := r.cleanupResources(ctx, backup); err != nil {
-				logger.Error(err, "failed to cleanup resources after successful backup")
-			}
 			return ctrl.Result{}, nil
 		}
 
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
 			logger.Info("backup Job failed", "job", job.Name, "reason", cond.Message)
+
+			// Cleanup temporary resources immediately on Job termination.
+			if err := r.cleanupResources(ctx, backup); err != nil {
+				logger.Error(err, "failed to cleanup resources after failed backup")
+			}
 
 			r.setCondition(backup, metav1.Condition{
 				Type:    string(hyperv1.BackupCompleted),
@@ -460,9 +497,6 @@ func (r *HCPEtcdBackupReconciler) handleJobStatus(ctx context.Context, backup *h
 				logger.Error(err, "failed to update HCP backup condition")
 			}
 
-			if err := r.cleanupResources(ctx, backup); err != nil {
-				logger.Error(err, "failed to cleanup resources after failed backup")
-			}
 			return ctrl.Result{}, nil
 		}
 	}
