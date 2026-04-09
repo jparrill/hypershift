@@ -1951,6 +1951,7 @@ type ManagedEtcdStorageSpec struct {
 	// +kubebuilder:validation:MaxItems=1
 	// +kubebuilder:validation:items:MaxLength=1024
 	// +kubebuilder:validation:XValidation:rule="self.size() <= 1", message="RestoreSnapshotURL shouldn't contain more than 1 entry"
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="restoreSnapshotURL is immutable"
 	RestoreSnapshotURL []string `json:"restoreSnapshotURL,omitempty"`
 }
 
