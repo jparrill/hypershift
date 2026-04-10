@@ -1901,6 +1901,7 @@ type EtcdSpec struct {
 type ManagedEtcdSpec struct {
 	// storage specifies how etcd data is persisted.
 	// +required
+	// +kubebuilder:validation:XValidation:rule="has(self.restoreSnapshotURL) == has(oldSelf.restoreSnapshotURL)",message="restoreSnapshotURL cannot be added or removed after creation"
 	Storage ManagedEtcdStorageSpec `json:"storage"`
 
 	// backup defines the backup configuration for managed etcd, including
@@ -1952,6 +1953,7 @@ type ManagedEtcdStorageSpec struct {
 	// +kubebuilder:validation:MaxItems=1
 	// +kubebuilder:validation:items:MaxLength=1024
 	// +kubebuilder:validation:XValidation:rule="self.size() <= 1", message="RestoreSnapshotURL shouldn't contain more than 1 entry"
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="restoreSnapshotURL is immutable"
 	RestoreSnapshotURL []string `json:"restoreSnapshotURL,omitempty"`
 }
 
