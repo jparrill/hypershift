@@ -2527,6 +2527,8 @@ spec:
                             - message: RestoreSnapshotURL shouldn't contain more than
                                 1 entry
                               rule: self.size() <= 1
+                            - message: restoreSnapshotURL is immutable
+                              rule: self == oldSelf
                           type:
                             description: |-
                               type is the kind of persistent storage implementation to use for etcd.
@@ -2537,6 +2539,10 @@ spec:
                         required:
                         - type
                         type: object
+                        x-kubernetes-validations:
+                        - message: restoreSnapshotURL cannot be added or removed after
+                            creation
+                          rule: has(self.restoreSnapshotURL) == has(oldSelf.restoreSnapshotURL)
                     required:
                     - storage
                     type: object
