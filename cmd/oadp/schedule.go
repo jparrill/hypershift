@@ -124,6 +124,20 @@ func (o *CreateOptions) RunSchedule(ctx context.Context) error {
 		var err error
 		o.Client, err = util.GetClient()
 		if err != nil {
+			if o.Render {
+				// In render mode, if we can't connect to cluster, we'll still render but skip validations
+				o.Log.Info("Warning: Cannot connect to cluster for validation, skipping all checks")
+				schedule, resourcePolicyCM, err := o.GenerateScheduleObject("AWS")
+				if err != nil {
+					return fmt.Errorf("failed to generate schedule object: %w", err)
+				}
+				if resourcePolicyCM != nil {
+					if err := renderYAMLObject(resourcePolicyCM); err != nil {
+						return err
+					}
+				}
+				return renderYAMLObject(schedule)
+			}
 			return fmt.Errorf("failed to create kubernetes client for schedule validation: %w", err)
 		}
 	}
