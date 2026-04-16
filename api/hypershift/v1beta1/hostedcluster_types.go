@@ -1908,7 +1908,6 @@ type ManagedEtcdSpec struct {
 	// optional KMS key settings for artifact encryption in cloud storage.
 	// This configuration is only used when an HCPEtcdBackup CR exists.
 	// +optional
-	// +openshift:enable:FeatureGate=HCPEtcdBackup
 	Backup HCPEtcdBackupConfig `json:"backup,omitzero"`
 }
 
@@ -2185,7 +2184,6 @@ type HostedClusterStatus struct {
 	// lastSuccessfulEtcdBackupURL is the cloud storage URL of the most recent
 	// successful etcd backup snapshot. Persisted here because HCPEtcdBackup CRs
 	// are ephemeral and may be deleted by retention policies.
-	// +openshift:enable:FeatureGate=HCPEtcdBackup
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=2048

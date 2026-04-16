@@ -8,7 +8,6 @@ import (
 	"time"
 
 	hyperv1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
-	"github.com/openshift/hypershift/hypershift-operator/featuregate"
 	supportconfig "github.com/openshift/hypershift/support/config"
 	"github.com/openshift/hypershift/support/releaseinfo"
 	hyperutil "github.com/openshift/hypershift/support/util"
@@ -110,11 +109,6 @@ func (r *HCPEtcdBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func (r *HCPEtcdBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-
-	// Feature gate check
-	if !featuregate.Gate().Enabled(featuregate.HCPEtcdBackup) {
-		return ctrl.Result{}, nil
-	}
 
 	// Fetch the HCPEtcdBackup CR
 	backup := &hyperv1.HCPEtcdBackup{}

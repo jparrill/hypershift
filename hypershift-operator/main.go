@@ -640,17 +640,15 @@ func run(ctx context.Context, opts *StartOptions, log logr.Logger) error {
 		log.Info("UWM telemetry remote write controller disabled")
 	}
 
-	if featuregate.Gate().Enabled(featuregate.HCPEtcdBackup) {
-		etcdBackupReconciler := &etcdbackup.HCPEtcdBackupReconciler{
-			Client:                  mgr.GetClient(),
-			OperatorNamespace:       opts.Namespace,
-			ReleaseProvider:         registryProvider.ReleaseProvider,
-			HypershiftOperatorImage: operatorImage,
-			MaxBackupCount:          opts.EtcdBackupMaxCount,
-		}
-		if err := etcdBackupReconciler.SetupWithManager(mgr); err != nil {
-			return fmt.Errorf("unable to create etcd backup controller: %w", err)
-		}
+	etcdBackupReconciler := &etcdbackup.HCPEtcdBackupReconciler{
+		Client:                  mgr.GetClient(),
+		OperatorNamespace:       opts.Namespace,
+		ReleaseProvider:         registryProvider.ReleaseProvider,
+		HypershiftOperatorImage: operatorImage,
+		MaxBackupCount:          opts.EtcdBackupMaxCount,
+	}
+	if err := etcdBackupReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("unable to create etcd backup controller: %w", err)
 	}
 
 	if sharedingress.UseSharedIngress() {
