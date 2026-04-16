@@ -1,8 +1,6 @@
 apiVersion: apiextensions.k8s.io/v1
 name: "HCPEtcdBackup validation"
 crdName: hcpetcdbackups.hypershift.openshift.io
-featureGates:
-  - HCPEtcdBackup
 version: v1beta1
 tests:
   onCreate:
