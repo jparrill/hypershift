@@ -267,10 +267,7 @@ type HCPEtcdBackupEncryptionMetadataAzure struct {
 // +kubebuilder:printcolumn:name="Completed",type="string",JSONPath=".status.conditions[?(@.type==\"BackupCompleted\")].status",description="Backup completion status"
 // +kubebuilder:printcolumn:name="URL",type="string",JSONPath=".status.snapshotURL",description="Snapshot URL"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-// +openshift:enable:FeatureGate=HCPEtcdBackup
-
 // HCPEtcdBackup represents a request to back up etcd for a hosted control plane.
-// This resource is feature-gated behind the HCPEtcdBackup feature gate.
 type HCPEtcdBackup struct {
 	metav1.TypeMeta `json:",inline"`
 	// metadata is the metadata for the HCPEtcdBackup.

@@ -312,81 +312,6 @@ GCPPrivateServiceConnectStatus
 </tr>
 </tbody>
 </table>
-##HCPEtcdBackup { #hypershift.openshift.io/v1beta1.HCPEtcdBackup }
-<p>
-<p>HCPEtcdBackup represents a request to back up etcd for a hosted control plane.
-This resource is feature-gated behind the HCPEtcdBackup feature gate.</p>
-</p>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>
-<code>apiVersion</code></br>
-string</td>
-<td>
-<code>
-hypershift.openshift.io/v1beta1
-</code>
-</td>
-</tr>
-<tr>
-<td>
-<code>kind</code></br>
-string
-</td>
-<td><code>HCPEtcdBackup</code></td>
-</tr>
-<tr>
-<td>
-<code>metadata</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta">
-Kubernetes meta/v1.ObjectMeta
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>metadata is the metadata for the HCPEtcdBackup.</p>
-Refer to the Kubernetes API documentation for the fields of the
-<code>metadata</code> field.
-</td>
-</tr>
-<tr>
-<td>
-<code>spec,omitzero</code></br>
-<em>
-<a href="#hypershift.openshift.io/v1beta1.HCPEtcdBackupSpec">
-HCPEtcdBackupSpec
-</a>
-</em>
-</td>
-<td>
-<p>spec is the specification for the HCPEtcdBackup.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>status,omitzero</code></br>
-<em>
-<a href="#hypershift.openshift.io/v1beta1.HCPEtcdBackupStatus">
-HCPEtcdBackupStatus
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>status is the status of the HCPEtcdBackup.</p>
-</td>
-</tr>
-</tbody>
-</table>
 ##HostedCluster { #hypershift.openshift.io/v1beta1.HostedCluster }
 <p>
 <p>HostedCluster is the primary representation of a HyperShift cluster and encapsulates
@@ -8051,6 +7976,63 @@ GCPServiceAccountsEmails
 <p>serviceAccountsEmails contains email addresses of various Google Service Accounts
 required to enable integrations for different controllers and operators.
 This follows the AWS pattern of having different roles for different purposes.</p>
+</td>
+</tr>
+</tbody>
+</table>
+###HCPEtcdBackup { #hypershift.openshift.io/v1beta1.HCPEtcdBackup }
+<p>
+<p>HCPEtcdBackup represents a request to back up etcd for a hosted control plane.</p>
+</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>metadata</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta">
+Kubernetes meta/v1.ObjectMeta
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>metadata is the metadata for the HCPEtcdBackup.</p>
+Refer to the Kubernetes API documentation for the fields of the
+<code>metadata</code> field.
+</td>
+</tr>
+<tr>
+<td>
+<code>spec,omitzero</code></br>
+<em>
+<a href="#hypershift.openshift.io/v1beta1.HCPEtcdBackupSpec">
+HCPEtcdBackupSpec
+</a>
+</em>
+</td>
+<td>
+<p>spec is the specification for the HCPEtcdBackup.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>status,omitzero</code></br>
+<em>
+<a href="#hypershift.openshift.io/v1beta1.HCPEtcdBackupStatus">
+HCPEtcdBackupStatus
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>status is the status of the HCPEtcdBackup.</p>
 </td>
 </tr>
 </tbody>

@@ -168,8 +168,7 @@ hcpetcdbackups.hypershift.openshift.io:
   CRDName: hcpetcdbackups.hypershift.openshift.io
   Capability: ""
   Category: ""
-  FeatureGates:
-  - HCPEtcdBackup
+  FeatureGates: []
   FilenameOperatorName: ""
   FilenameOperatorOrdering: ""
   FilenameRunLevel: ""
@@ -193,8 +192,7 @@ hcpetcdbackups.hypershift.openshift.io:
   Scope: Namespaced
   ShortNames:
   - hcpetcdbk
-  TopLevelFeatureGates:
-  - HCPEtcdBackup
+  TopLevelFeatureGates: []
   Version: v1beta1
 
 hostedclusters.hypershift.openshift.io:
@@ -211,7 +209,6 @@ hostedclusters.hypershift.openshift.io:
   - ExternalOIDCWithUIDAndExtraClaimMappings
   - ExternalOIDCWithUpstreamParity
   - GCPPlatform
-  - HCPEtcdBackup
   - HyperShiftOnlyDynamicResourceAllocation
   - ImageStreamImportMode
   - KMSEncryptionProvider
@@ -284,7 +281,6 @@ hostedcontrolplanes.hypershift.openshift.io:
   - ExternalOIDCWithUIDAndExtraClaimMappings
   - ExternalOIDCWithUpstreamParity
   - GCPPlatform
-  - HCPEtcdBackup
   - HyperShiftOnlyDynamicResourceAllocation
   - ImageStreamImportMode
   - KMSEncryptionProvider
