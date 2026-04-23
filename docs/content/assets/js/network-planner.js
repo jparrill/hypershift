@@ -16,6 +16,7 @@
       infra: { bg: "#fef3c7", border: "#d97706" },
       bmc:   { bg: "#fce4ec", border: "#c62828" },
       def:   { bg: "#f5f5f5", border: "#9e9e9e" },
+      actor: { bg: "#fff3e0", border: "#e65100" },
     };
 
     var NC = {
@@ -36,7 +37,15 @@
           { value: "kubevirt", label: "KubeVirt" },
         ],
       },
-      cloudTopology: {
+      awsTopology: {
+        id: "topology", title: "Endpoint Access",
+        options: [
+          { value: "public", label: "Public" },
+          { value: "publicandprivate", label: "Public and Private" },
+          { value: "private", label: "Private" },
+        ],
+      },
+      azureTopology: {
         id: "topology", title: "Endpoint Access",
         options: [
           { value: "public", label: "Public" },
@@ -71,10 +80,10 @@
       var s = [STEPS.platform];
       if (!state.platform) return s;
       if (state.platform === "aws") {
-        s.push(STEPS.cloudTopology);
+        s.push(STEPS.awsTopology);
         if (state.topology === "public") s.push(STEPS.awsExtDns);
       } else if (state.platform === "azure") {
-        s.push(STEPS.cloudTopology);
+        s.push(STEPS.azureTopology);
       } else if (state.platform === "agent") {
         s.push(STEPS.agentPublishing);
       } else if (state.platform === "kubevirt") {
@@ -99,6 +108,7 @@
     function variantKey() {
       if (state.platform === "aws") {
         if (state.topology === "public") return "aws_public_" + state.extdns;
+        if (state.topology === "publicandprivate") return "aws_publicandprivate";
         return "aws_private";
       }
       if (state.platform === "azure") return "azure_" + state.topology;
@@ -421,6 +431,7 @@
         { label: "Contact Point", c: FILL.cp },
         { label: "Data Plane", c: FILL.dp },
         { label: "Infrastructure", c: FILL.infra },
+        { label: "Traffic Actor", c: FILL.actor },
       ];
       var legendItems = legend.length + 1;
       var lx = W / 2 - (legendItems * 120) / 2;
@@ -458,36 +469,41 @@
 
     DIAGRAMS.aws_public_no = function () {
       return {
-        title: "AWS — Public (no External DNS)", height: 510,
+        title: "AWS — Public (no External DNS)", height: 540,
         subtitle: "Publishing: API → LoadBalancer  |  OAuth, Konnectivity, Ignition → Route",
         networks: [
-          { id: "ext", y: 70, label: "Public / External Network", color: NC.ext },
-          { id: "mgmt", y: 220, label: "Management Cluster Network", color: NC.mgmt },
-          { id: "dp", y: 380, label: "Worker VPC", color: NC.dp },
+          { id: "ext", y: 100, label: "Public / External Network", color: NC.ext },
+          { id: "mgmt", y: 250, label: "Management Cluster Network", color: NC.mgmt },
+          { id: "dp", y: 410, label: "Worker VPC", color: NC.dp },
         ],
         rows: [
-          { network: "ext", y: 90, items: [
+          { network: "ext", y: 120, items: [
             { id: "elb", label: "External LB", w: 110, style: "infra" },
             { id: "mgi", label: "Mgmt Ingress", sub: "OCP Router", w: 120, style: "infra" },
           ]},
-          { network: "mgmt", y: 240, items: [
+          { network: "mgmt", y: 270, items: [
             { id: "kas", label: "API", sub: ":6443 · LB", w: 100, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 100, style: "cp", user: true },
-            { id: "kc", label: "Konnectivity", sub: ":8091 · Route", w: 120, style: "cp" },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 120, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443 · Route", w: 100, style: "cp" },
           ]},
-          { network: "dp", y: 400, items: [
+          { network: "dp", y: 430, items: [
             { id: "w1", label: "Worker 1", w: 100, h: 58, style: "dp" },
             { id: "w2", label: "Worker 2", w: 100, h: 58, style: "dp" },
             { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
           ]},
         ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+        ],
         links: [
+          { from: "users", to: "elb", label: "API clients" },
+          { from: "users", to: "mgi", label: "app users" },
           { from: "elb", to: "kas" },
           { from: "mgi", to: "oauth" },
           { from: "mgi", to: "kc" },
           { from: "mgi", to: "ign" },
-          { from: "w1", to: "kc", label: "tunnel", dashed: true },
+          { from: "w1", to: "kc", label: "reverse tunnel", dashed: true },
           { from: "w2", to: "kc", dashed: true },
         ],
       };
@@ -495,37 +511,93 @@
 
     DIAGRAMS.aws_public_yes = function () {
       return {
-        title: "AWS — Public (External DNS)", height: 510,
-        subtitle: "Publishing: All services → Route (via HCP Router)",
+        title: "AWS — Public (External DNS)", height: 540,
+        subtitle: "Publishing: All services → Route (via HCP Router, External DNS creates Route53 hostnames)",
         networks: [
-          { id: "ext", y: 70, label: "Public / External Network", color: NC.ext },
-          { id: "mgmt", y: 220, label: "Management Cluster Network", color: NC.mgmt },
-          { id: "dp", y: 380, label: "Worker VPC", color: NC.dp },
+          { id: "ext", y: 100, label: "Public / External Network", color: NC.ext },
+          { id: "mgmt", y: 250, label: "Management Cluster Network", color: NC.mgmt },
+          { id: "dp", y: 410, label: "Worker VPC", color: NC.dp },
         ],
         rows: [
-          { network: "ext", y: 90, items: [
-            { id: "edns", label: "External DNS", sub: "hostnames", w: 110, style: "infra" },
-            { id: "elb", label: "External LB", w: 110, style: "infra" },
-            { id: "hcpr", label: "HCP Router", w: 110, style: "infra" },
+          { network: "ext", y: 120, items: [
+            { id: "elb", label: "External LB", w: 120, style: "infra" },
+            { id: "hcpr", label: "HCP Router", w: 120, style: "infra" },
           ]},
-          { network: "mgmt", y: 240, items: [
+          { network: "mgmt", y: 270, items: [
             { id: "kas", label: "API", sub: ":6443 · Route", w: 100, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 100, style: "cp", user: true },
-            { id: "kc", label: "Konnectivity", sub: ":8091 · Route", w: 120, style: "cp" },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 120, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443 · Route", w: 100, style: "cp" },
           ]},
-          { network: "dp", y: 400, items: [
+          { network: "dp", y: 430, items: [
             { id: "w1", label: "Worker 1", w: 100, h: 58, style: "dp" },
             { id: "w2", label: "Worker 2", w: 100, h: 58, style: "dp" },
             { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
           ]},
         ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+        ],
         links: [
+          { from: "users", to: "elb", label: "all traffic" },
+          { from: "elb", to: "hcpr" },
           { from: "hcpr", to: "kas" },
           { from: "hcpr", to: "oauth" },
           { from: "hcpr", to: "kc" },
           { from: "hcpr", to: "ign" },
-          { from: "w1", to: "kc", label: "tunnel", dashed: true },
+          { from: "w1", to: "kc", label: "reverse tunnel", dashed: true },
+          { from: "w2", to: "kc", dashed: true },
+        ],
+      };
+    };
+
+    DIAGRAMS.aws_publicandprivate = function () {
+      return {
+        title: "AWS — Public and Private Topology", height: 625,
+        subtitle: "Publishing: API → LoadBalancer (public)  |  DP access via PrivateLink",
+        networks: [
+          { id: "ext", y: 100, label: "Public / External Network", color: NC.ext },
+          { id: "mgmt", y: 235, label: "Management Cluster Network", color: NC.mgmt },
+          { id: "plink", y: 385, label: "AWS PrivateLink", color: NC.plink },
+          { id: "dp", y: 495, label: "Worker VPC", color: NC.dp },
+        ],
+        rows: [
+          { network: "ext", y: 120, items: [
+            { id: "elb", label: "External LB", w: 120, style: "infra" },
+            { id: "mgi", label: "Mgmt Ingress", sub: "OCP Router", w: 120, style: "infra" },
+          ]},
+          { network: "mgmt", y: 255, items: [
+            { id: "kas", label: "API", sub: ":6443 · LB", w: 90, style: "cp", user: true },
+            { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 90, style: "cp", user: true },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 110, style: "cp" },
+            { id: "ign", label: "Ignition", sub: ":443 · Route", w: 90, style: "cp" },
+            { id: "hcpr", label: "HCP Router", w: 100, style: "infra" },
+          ]},
+          { network: "plink", y: 405, items: [
+            { id: "vep", label: "VPC Endpoint", w: 120, style: "infra" },
+          ]},
+          { network: "dp", y: 515, items: [
+            { id: "w1", label: "Worker 1", w: 100, h: 58, style: "dp" },
+            { id: "w2", label: "Worker 2", w: 100, h: 58, style: "dp" },
+            { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
+          ]},
+        ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+          { id: "ilb", label: "Internal LB", x: 580, y: 310, w: 100, h: 35, style: "infra" },
+        ],
+        links: [
+          { from: "users", to: "elb", label: "API clients" },
+          { from: "users", to: "mgi", label: "app users" },
+          { from: "elb", to: "kas", label: "public" },
+          { from: "mgi", to: "oauth" },
+          { from: "mgi", to: "kc" },
+          { from: "mgi", to: "ign" },
+          { from: "vep", to: "ilb", label: "PrivateLink" },
+          { from: "ilb", to: "hcpr" },
+          { from: "w1", to: "vep", dashed: true },
+          { from: "w2", to: "vep", dashed: true },
+          { from: "w1", to: "kc", label: "reverse tunnel", dashed: true },
           { from: "w2", to: "kc", dashed: true },
         ],
       };
@@ -533,37 +605,41 @@
 
     DIAGRAMS.aws_private = function () {
       return {
-        title: "AWS — Private Topology", height: 530,
-        subtitle: "Publishing: All services → Route (via PrivateLink)",
+        title: "AWS — Private Topology", height: 560,
+        subtitle: "Publishing: All services → Route (via PrivateLink, no public access — requires VPN/DirectConnect)",
         networks: [
-          { id: "mgmt", y: 70, label: "Management Cluster Network", color: NC.mgmt },
-          { id: "plink", y: 250, label: "AWS PrivateLink", color: NC.plink },
-          { id: "dp", y: 400, label: "Worker VPC", color: NC.dp },
+          { id: "mgmt", y: 100, label: "Management Cluster Network", color: NC.mgmt },
+          { id: "plink", y: 280, label: "AWS PrivateLink", color: NC.plink },
+          { id: "dp", y: 430, label: "Worker VPC", color: NC.dp },
         ],
         rows: [
-          { network: "mgmt", y: 90, items: [
+          { network: "mgmt", y: 120, items: [
             { id: "kas", label: "API", sub: ":6443 · Route", w: 90, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 90, style: "cp", user: true },
-            { id: "kc", label: "Konnectivity", sub: ":8091 · Route", w: 110, style: "cp" },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 110, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443 · Route", w: 90, style: "cp" },
             { id: "hcpr", label: "HCP Router", w: 100, style: "infra" },
           ]},
-          { network: "plink", y: 270, items: [
+          { network: "plink", y: 300, items: [
             { id: "vep", label: "VPC Endpoint", w: 120, style: "infra" },
           ]},
-          { network: "dp", y: 420, items: [
+          { network: "dp", y: 450, items: [
             { id: "w1", label: "Worker 1", w: 100, h: 58, style: "dp" },
             { id: "w2", label: "Worker 2", w: 100, h: 58, style: "dp" },
             { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
           ]},
         ],
         floats: [
-          { id: "ilb", label: "Internal LB", x: 560, y: 175, w: 100, h: 35, style: "infra" },
+          { id: "users", label: "VPN / DC Users", x: 355, y: 46, w: 170, h: 26, style: "actor" },
+          { id: "ilb", label: "Internal LB", x: 560, y: 205, w: 100, h: 35, style: "infra" },
         ],
         links: [
-          { from: "hcpr", to: "ilb" },
-          { from: "ilb", to: "vep" },
-          { from: "w1", to: "kc", label: "tunnel", dashed: true },
+          { from: "users", to: "vep", label: "via VPN", labelPos: 0.7 },
+          { from: "vep", to: "ilb", label: "PrivateLink" },
+          { from: "ilb", to: "hcpr" },
+          { from: "w1", to: "vep", dashed: true },
+          { from: "w2", to: "vep", dashed: true },
+          { from: "w1", to: "kc", label: "reverse tunnel", dashed: true },
           { from: "w2", to: "kc", dashed: true },
         ],
       };
@@ -571,35 +647,39 @@
 
     DIAGRAMS.azure_public = function () {
       return {
-        title: "Azure — Public Topology", height: 510,
+        title: "Azure — Public Topology", height: 540,
         subtitle: "Publishing: All services → Route",
         networks: [
-          { id: "ext", y: 70, label: "Public / External Network", color: NC.ext },
-          { id: "mgmt", y: 220, label: "Management Cluster Network", color: NC.mgmt },
-          { id: "dp", y: 380, label: "Worker VNET", color: NC.dp },
+          { id: "ext", y: 100, label: "Public / External Network", color: NC.ext },
+          { id: "mgmt", y: 250, label: "Management Cluster Network", color: NC.mgmt },
+          { id: "dp", y: 410, label: "Worker VNET", color: NC.dp },
         ],
         rows: [
-          { network: "ext", y: 90, items: [
+          { network: "ext", y: 120, items: [
             { id: "mgi", label: "Mgmt Ingress", sub: "OCP Router", w: 130, style: "infra" },
           ]},
-          { network: "mgmt", y: 240, items: [
+          { network: "mgmt", y: 270, items: [
             { id: "kas", label: "API", sub: ":6443 · Route", w: 100, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 100, style: "cp", user: true },
-            { id: "kc", label: "Konnectivity", sub: ":8091 · Route", w: 120, style: "cp" },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 120, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443 · Route", w: 100, style: "cp" },
           ]},
-          { network: "dp", y: 400, items: [
+          { network: "dp", y: 430, items: [
             { id: "w1", label: "Worker 1", w: 100, h: 58, style: "dp" },
             { id: "w2", label: "Worker 2", w: 100, h: 58, style: "dp" },
             { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
           ]},
         ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+        ],
         links: [
+          { from: "users", to: "mgi", label: "all traffic" },
           { from: "mgi", to: "kas" },
           { from: "mgi", to: "oauth" },
           { from: "mgi", to: "kc" },
           { from: "mgi", to: "ign" },
-          { from: "w1", to: "kc", label: "tunnel", dashed: true },
+          { from: "w1", to: "kc", label: "reverse tunnel", dashed: true },
           { from: "w2", to: "kc", dashed: true },
         ],
       };
@@ -607,37 +687,41 @@
 
     DIAGRAMS.azure_private = function () {
       return {
-        title: "Azure — Private Topology", height: 530,
+        title: "Azure — Private Topology", height: 560,
         subtitle: "Publishing: All services → Route (via Private Link)",
         networks: [
-          { id: "mgmt", y: 70, label: "Management Cluster Network", color: NC.mgmt },
-          { id: "plink", y: 250, label: "Azure Private Link", color: NC.plink },
-          { id: "dp", y: 400, label: "Worker VNET", color: NC.dp },
+          { id: "mgmt", y: 100, label: "Management Cluster Network", color: NC.mgmt },
+          { id: "plink", y: 280, label: "Azure Private Link", color: NC.plink },
+          { id: "dp", y: 430, label: "Worker VNET", color: NC.dp },
         ],
         rows: [
-          { network: "mgmt", y: 90, items: [
+          { network: "mgmt", y: 120, items: [
             { id: "kas", label: "API", sub: ":6443 · Route", w: 90, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 90, style: "cp", user: true },
-            { id: "kc", label: "Konnectivity", sub: ":8091 · Route", w: 110, style: "cp" },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 110, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443 · Route", w: 90, style: "cp" },
             { id: "hcpr", label: "HCP Router", w: 100, style: "infra" },
           ]},
-          { network: "plink", y: 270, items: [
+          { network: "plink", y: 300, items: [
             { id: "pe", label: "Private Endpoint", w: 130, style: "infra" },
           ]},
-          { network: "dp", y: 420, items: [
+          { network: "dp", y: 450, items: [
             { id: "w1", label: "Worker 1", w: 100, h: 58, style: "dp" },
             { id: "w2", label: "Worker 2", w: 100, h: 58, style: "dp" },
             { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
           ]},
         ],
         floats: [
-          { id: "ilb", label: "Internal LB", x: 560, y: 175, w: 100, h: 35, style: "infra" },
+          { id: "users", label: "VPN / DC Users", x: 355, y: 46, w: 170, h: 26, style: "actor" },
+          { id: "ilb", label: "Internal LB", x: 560, y: 205, w: 100, h: 35, style: "infra" },
         ],
         links: [
-          { from: "hcpr", to: "ilb" },
-          { from: "ilb", to: "pe" },
-          { from: "w1", to: "kc", label: "tunnel", dashed: true },
+          { from: "users", to: "pe", label: "via VPN", labelPos: 0.7 },
+          { from: "pe", to: "ilb", label: "Private Link" },
+          { from: "ilb", to: "hcpr" },
+          { from: "w1", to: "pe", dashed: true },
+          { from: "w2", to: "pe", dashed: true },
+          { from: "w1", to: "kc", label: "reverse tunnel", dashed: true },
           { from: "w2", to: "kc", dashed: true },
         ],
       };
@@ -645,20 +729,20 @@
 
     DIAGRAMS.agent_nodeport = function () {
       return {
-        title: "Agent / Bare Metal — NodePort", height: 590,
+        title: "Agent / Bare Metal — NodePort", height: 635,
         subtitle: "Publishing: All services → NodePort",
         networks: [
-          { id: "app", y: 55, label: "Application Network", color: NC.ext },
-          { id: "mgmt", y: 170, label: "Cluster Network", color: NC.mgmt },
-          { id: "storage", y: 290, label: "Storage Network (etcd PVs — Ceph, NFS, iSCSI…)", color: NC.storage },
-          { id: "dp", y: 380, label: "Data Plane Network", color: NC.dp },
-          { id: "bmc", y: 490, label: "BMC / IPMI Network (provisioning)", color: NC.bmc, dashed: true },
+          { id: "app", y: 100, label: "Application Network", color: NC.ext },
+          { id: "mgmt", y: 215, label: "Cluster Network", color: NC.mgmt },
+          { id: "storage", y: 335, label: "Storage Network (etcd PVs — Ceph, NFS, iSCSI…)", color: NC.storage },
+          { id: "dp", y: 425, label: "Data Plane Network", color: NC.dp },
+          { id: "bmc", y: 535, label: "BMC / IPMI Network (provisioning)", color: NC.bmc, dashed: true },
         ],
         rows: [
-          { network: "app", y: 75, items: [
+          { network: "app", y: 120, items: [
             { id: "np", label: "NodePort", sub: ":30000+", w: 110, style: "infra" },
           ]},
-          { network: "mgmt", y: 190, items: [
+          { network: "mgmt", y: 235, items: [
             { id: "kas", label: "API", sub: ":6443 · NP", w: 85, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · NP", w: 85, style: "cp", user: true },
             { id: "kc", label: "Konnectivity", sub: ":8091 · NP", w: 110, style: "cp" },
@@ -666,7 +750,7 @@
             { id: "mgmtn", label: "Mgmt Nodes", sub: "etcd PVs", w: 100, h: 58, style: "def" },
             { id: "metal3", label: "Metal3", sub: "Ironic", w: 80, style: "def" },
           ]},
-          { network: "dp", y: 400, items: [
+          { network: "dp", y: 445, items: [
             { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
             { id: "w1", label: "Worker 1", w: 100, h: 58, style: "dp" },
             { id: "w2", label: "Worker 2", w: 100, h: 58, style: "dp" },
@@ -685,12 +769,16 @@
           { comp: "w2", net: "app", dx: -13, startDy: -10 },
           { comp: "dpi", net: "app", dx: -102 },
         ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+        ],
         links: [
+          { from: "users", to: "np", label: "API clients" },
           { from: "np", to: "kas" },
           { from: "np", to: "oauth" },
           { from: "np", to: "kc" },
           { from: "np", to: "ign" },
-          { from: "w1", to: "kc", label: "tunnel", dashed: true },
+          { from: "w1", to: "kc", label: "reverse tunnel", dashed: true },
           { from: "w2", to: "kc", dashed: true },
         ],
       };
@@ -698,29 +786,29 @@
 
     DIAGRAMS.agent_loadbalancer = function () {
       return {
-        title: "Agent / Bare Metal — LoadBalancer", height: 590,
+        title: "Agent / Bare Metal — LoadBalancer", height: 635,
         subtitle: "Publishing: API → LoadBalancer (MetalLB)  |  OAuth, Konnectivity, Ignition → Route",
         networks: [
-          { id: "app", y: 55, label: "Application Network", color: NC.ext },
-          { id: "mgmt", y: 170, label: "Cluster Network", color: NC.mgmt },
-          { id: "storage", y: 290, label: "Storage Network (etcd PVs — Ceph, NFS, iSCSI…)", color: NC.storage },
-          { id: "dp", y: 380, label: "Data Plane Network", color: NC.dp },
-          { id: "bmc", y: 490, label: "BMC / IPMI Network (provisioning)", color: NC.bmc, dashed: true },
+          { id: "app", y: 100, label: "Application Network", color: NC.ext },
+          { id: "mgmt", y: 215, label: "Cluster Network", color: NC.mgmt },
+          { id: "storage", y: 335, label: "Storage Network (etcd PVs — Ceph, NFS, iSCSI…)", color: NC.storage },
+          { id: "dp", y: 425, label: "Data Plane Network", color: NC.dp },
+          { id: "bmc", y: 535, label: "BMC / IPMI Network (provisioning)", color: NC.bmc, dashed: true },
         ],
         rows: [
-          { network: "app", y: 75, items: [
+          { network: "app", y: 120, items: [
             { id: "mlb", label: "MetalLB", sub: "IPAddressPool", w: 120, style: "infra" },
             { id: "mgi", label: "Mgmt Ingress", sub: "OCP Router", w: 120, style: "infra" },
           ]},
-          { network: "mgmt", y: 190, items: [
+          { network: "mgmt", y: 235, items: [
             { id: "kas", label: "API", sub: ":6443 · LB", w: 85, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 85, style: "cp", user: true },
-            { id: "kc", label: "Konnectivity", sub: ":8091 · Route", w: 110, style: "cp" },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 110, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443 · Route", w: 85, style: "cp" },
             { id: "mgmtn", label: "Mgmt Nodes", sub: "etcd PVs", w: 100, h: 58, style: "def" },
             { id: "metal3", label: "Metal3", sub: "Ironic", w: 80, style: "def" },
           ]},
-          { network: "dp", y: 400, items: [
+          { network: "dp", y: 445, items: [
             { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
             { id: "w1", label: "Worker 1", w: 100, h: 58, style: "dp" },
             { id: "w2", label: "Worker 2", w: 100, h: 58, style: "dp" },
@@ -739,12 +827,17 @@
           { comp: "w2", net: "app", dx: 101, startDy: -10 },
           { comp: "dpi", net: "app", dx: -102 },
         ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+        ],
         links: [
+          { from: "users", to: "mlb", label: "API clients" },
+          { from: "users", to: "mgi", label: "app users" },
           { from: "mlb", to: "kas" },
           { from: "mgi", to: "oauth" },
           { from: "mgi", to: "kc" },
           { from: "mgi", to: "ign" },
-          { from: "w1", to: "kc", label: "tunnel", dashed: true },
+          { from: "w1", to: "kc", label: "reverse tunnel", dashed: true },
           { from: "w2", to: "kc", dashed: true },
         ],
       };
@@ -752,36 +845,40 @@
 
     DIAGRAMS.kv_passthrough = function () {
       return {
-        title: "KubeVirt — BaseDomainPassthrough", height: 510,
+        title: "KubeVirt — BaseDomainPassthrough", height: 540,
         subtitle: "Publishing: All services → Route (passthrough via mgmt ingress)",
         networks: [
-          { id: "ext", y: 70, label: "External Network", color: NC.ext },
-          { id: "mgmt", y: 220, label: "Management Cluster / Pod Network", color: NC.mgmt },
-          { id: "dp", y: 380, label: "Data Plane — KubeVirt VMs (on pod network)", color: NC.dp },
+          { id: "ext", y: 100, label: "External Network", color: NC.ext },
+          { id: "mgmt", y: 250, label: "Management Cluster / Pod Network", color: NC.mgmt },
+          { id: "dp", y: 410, label: "Data Plane — KubeVirt VMs (on pod network)", color: NC.dp },
         ],
         rows: [
-          { network: "ext", y: 90, items: [
+          { network: "ext", y: 120, items: [
             { id: "mgi", label: "Mgmt Ingress", sub: "Wildcard DNS", w: 130, style: "infra" },
           ]},
-          { network: "mgmt", y: 240, items: [
+          { network: "mgmt", y: 270, items: [
             { id: "kas", label: "API", sub: ":6443 · Route", w: 100, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 100, style: "cp", user: true },
-            { id: "kc", label: "Konnectivity", sub: ":8091 · Route", w: 120, style: "cp" },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 120, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443 · Route", w: 100, style: "cp" },
           ]},
-          { network: "dp", y: 400, items: [
+          { network: "dp", y: 430, items: [
             { id: "vm1", label: "VM 1", w: 100, h: 58, style: "dp" },
             { id: "vm2", label: "VM 2", w: 100, h: 58, style: "dp" },
             { id: "dpi", label: "DP Ingress", sub: ":443 only", w: 110, style: "dp", user: true },
           ]},
         ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+        ],
         links: [
+          { from: "users", to: "mgi", label: "all traffic" },
           { from: "mgi", to: "kas" },
           { from: "mgi", to: "oauth" },
           { from: "mgi", to: "kc" },
           { from: "mgi", to: "ign" },
           { from: "mgi", to: "dpi", label: "passthrough", dashed: true, labelPos: 0.75 },
-          { from: "vm1", to: "kc", label: "tunnel", dashed: true, labelPos: 0.2 },
+          { from: "vm1", to: "kc", label: "reverse tunnel", dashed: true, labelPos: 0.2 },
           { from: "vm2", to: "kc", dashed: true },
         ],
       };
@@ -789,38 +886,43 @@
 
     DIAGRAMS.kv_custom = function () {
       return {
-        title: "KubeVirt — Custom Domain + LB", height: 510,
+        title: "KubeVirt — Custom Domain + LB", height: 540,
         subtitle: "Publishing: API → LoadBalancer  |  OAuth, Konnectivity, Ignition → Route",
         networks: [
-          { id: "ext", y: 70, label: "External Network", color: NC.ext },
-          { id: "mgmt", y: 220, label: "Management Cluster / Pod Network", color: NC.mgmt },
-          { id: "dp", y: 380, label: "Data Plane — KubeVirt VMs (on pod network)", color: NC.dp },
+          { id: "ext", y: 100, label: "External Network", color: NC.ext },
+          { id: "mgmt", y: 250, label: "Management Cluster / Pod Network", color: NC.mgmt },
+          { id: "dp", y: 410, label: "Data Plane — KubeVirt VMs (on pod network)", color: NC.dp },
         ],
         rows: [
-          { network: "ext", y: 90, items: [
+          { network: "ext", y: 120, items: [
             { id: "elb", label: "External LB", sub: "MetalLB / Cloud", w: 130, style: "infra" },
             { id: "mgi", label: "Mgmt Ingress", sub: "OCP Router", w: 120, style: "infra" },
             { id: "dns", label: "Custom DNS", sub: "*.apps.…", w: 110, style: "infra" },
           ]},
-          { network: "mgmt", y: 240, items: [
+          { network: "mgmt", y: 270, items: [
             { id: "kas", label: "API", sub: ":6443 · LB", w: 100, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443 · Route", w: 100, style: "cp", user: true },
-            { id: "kc", label: "Konnectivity", sub: ":8091 · Route", w: 120, style: "cp" },
+            { id: "kc", label: "Konnectivity", sub: ":443 · Route", w: 120, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443 · Route", w: 100, style: "cp" },
           ]},
-          { network: "dp", y: 400, items: [
+          { network: "dp", y: 430, items: [
             { id: "vm1", label: "VM 1", w: 100, h: 58, style: "dp" },
             { id: "vm2", label: "VM 2", w: 100, h: 58, style: "dp" },
             { id: "dpi", label: "DP Ingress", sub: ":80/:443", w: 110, style: "dp", user: true },
           ]},
         ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+        ],
         links: [
+          { from: "users", to: "elb", label: "API clients" },
+          { from: "users", to: "dns", label: "app users" },
           { from: "elb", to: "kas" },
           { from: "mgi", to: "oauth" },
           { from: "mgi", to: "kc" },
           { from: "mgi", to: "ign" },
           { from: "dns", to: "dpi", label: "app traffic", dashed: true, labelPos: 0.75 },
-          { from: "vm1", to: "kc", label: "tunnel", dashed: true, labelPos: 0.2 },
+          { from: "vm1", to: "kc", label: "reverse tunnel", dashed: true, labelPos: 0.2 },
           { from: "vm2", to: "kc", dashed: true },
         ],
       };
@@ -828,36 +930,40 @@
 
     DIAGRAMS.kv_isolated = function () {
       return {
-        title: "KubeVirt — Isolated (Multus)", height: 500,
+        title: "KubeVirt — Isolated (Multus)", height: 530,
         subtitle: "Publishing: User-managed (via Multus NADs)",
         networks: [
-          { id: "mgmt", y: 70, label: "Management Cluster Network", color: NC.mgmt },
-          { id: "multus", y: 230, label: "Multus Additional Networks (NADs)", color: NC.multus },
-          { id: "dp", y: 370, label: "Data Plane — KubeVirt VMs (no pod network)", color: NC.dp },
+          { id: "mgmt", y: 100, label: "Management Cluster Network", color: NC.mgmt },
+          { id: "multus", y: 260, label: "Multus Additional Networks (NADs)", color: NC.multus },
+          { id: "dp", y: 400, label: "Data Plane — KubeVirt VMs (no pod network)", color: NC.dp },
         ],
         rows: [
-          { network: "mgmt", y: 90, items: [
+          { network: "mgmt", y: 120, items: [
             { id: "kas", label: "API", sub: ":6443", w: 90, style: "cp", user: true },
             { id: "oauth", label: "OAuth", sub: ":443", w: 90, style: "cp", user: true },
             { id: "kc", label: "Konnectivity", sub: ":8091", w: 110, style: "cp" },
             { id: "ign", label: "Ignition", sub: ":443", w: 90, style: "cp" },
           ]},
-          { network: "multus", y: 250, items: [
+          { network: "multus", y: 280, items: [
             { id: "nad1", label: "NAD 1", sub: "ns/net-1", w: 100, style: "infra" },
             { id: "nad2", label: "NAD 2", sub: "ns/net-2", w: 100, style: "infra" },
           ]},
-          { network: "dp", y: 390, items: [
+          { network: "dp", y: 420, items: [
             { id: "vm1", label: "VM 1", sub: "no pod net", w: 100, h: 58, style: "dp" },
             { id: "vm2", label: "VM 2", sub: "no pod net", w: 100, h: 58, style: "dp" },
             { id: "dpi", label: "DP Ingress", sub: "user-managed", w: 120, style: "dp", user: true },
           ]},
         ],
+        floats: [
+          { id: "users", label: "External Users", x: 370, y: 46, w: 140, h: 26, style: "actor" },
+        ],
         links: [
+          { from: "users", to: "kas", label: "user-managed" },
           { from: "vm1", to: "nad1" },
           { from: "vm2", to: "nad1" },
           { from: "vm1", to: "nad2" },
           { from: "vm2", to: "nad2" },
-          { from: "vm1", to: "kc", label: "tunnel via NAD", dashed: true, labelPos: 0.15 },
+          { from: "vm1", to: "kc", label: "reverse tunnel via NAD", dashed: true, labelPos: 0.15 },
           { from: "vm2", to: "kc", dashed: true },
         ],
       };
@@ -870,47 +976,55 @@
     SUMMARIES.aws_public_no = [
       { svc: "API", strategy: "LoadBalancer", port: "6443", detail: "External LB, public DNS — set hostname on all services (recommended)" },
       { svc: "OAuth", strategy: "Route", port: "443", detail: "Via management cluster ingress" },
-      { svc: "Konnectivity", strategy: "Route", port: "8091", detail: "Via management cluster ingress" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated, enables CP→DP communication" },
       { svc: "Ignition", strategy: "Route", port: "443", detail: "Via management cluster ingress" },
       { svc: "DP Ingress", strategy: "—", port: "80/443", detail: "Guest cluster router on workers" },
     ];
 
     SUMMARIES.aws_public_yes = [
-      { svc: "API", strategy: "Route", port: "6443", detail: "Via HCP Router + External LB — hostname required" },
-      { svc: "OAuth", strategy: "Route", port: "443", detail: "Via HCP Router + External LB — hostname required" },
-      { svc: "Konnectivity", strategy: "Route", port: "8091", detail: "Via HCP Router + External LB — hostname required" },
-      { svc: "Ignition", strategy: "Route", port: "443", detail: "Via HCP Router + External LB — hostname required" },
+      { svc: "API", strategy: "Route", port: "6443", detail: "External LB → HCP Router — hostname required (External DNS creates Route53 records)" },
+      { svc: "OAuth", strategy: "Route", port: "443", detail: "External LB → HCP Router — hostname required" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated, enables CP→DP communication" },
+      { svc: "Ignition", strategy: "Route", port: "443", detail: "External LB → HCP Router — hostname required" },
+      { svc: "DP Ingress", strategy: "—", port: "80/443", detail: "Guest cluster router on workers" },
+    ];
+
+    SUMMARIES.aws_publicandprivate = [
+      { svc: "API", strategy: "LoadBalancer", port: "6443", detail: "External LB (public access) + PrivateLink (data plane access)" },
+      { svc: "OAuth", strategy: "Route", port: "443", detail: "Public: via mgmt ingress | DP: Workers → VPC Endpoint → Internal LB → HCP Router" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated via PrivateLink, enables CP→DP communication" },
+      { svc: "Ignition", strategy: "Route", port: "443", detail: "Workers → VPC Endpoint → Internal LB → HCP Router" },
       { svc: "DP Ingress", strategy: "—", port: "80/443", detail: "Guest cluster router on workers" },
     ];
 
     SUMMARIES.aws_private = [
-      { svc: "API", strategy: "Route", port: "6443", detail: "HCP Router → Internal LB → PrivateLink" },
-      { svc: "OAuth", strategy: "Route", port: "443", detail: "HCP Router → Internal LB → PrivateLink" },
-      { svc: "Konnectivity", strategy: "Route", port: "8091", detail: "HCP Router → Internal LB → PrivateLink" },
-      { svc: "Ignition", strategy: "Route", port: "443", detail: "HCP Router → Internal LB → PrivateLink" },
+      { svc: "API", strategy: "Route", port: "6443", detail: "Workers → VPC Endpoint → Internal LB → HCP Router" },
+      { svc: "OAuth", strategy: "Route", port: "443", detail: "Workers → VPC Endpoint → Internal LB → HCP Router" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated via PrivateLink, enables CP→DP communication" },
+      { svc: "Ignition", strategy: "Route", port: "443", detail: "Workers → VPC Endpoint → Internal LB → HCP Router" },
       { svc: "DP Ingress", strategy: "—", port: "80/443", detail: "Guest cluster router on workers" },
     ];
 
     SUMMARIES.azure_public = [
       { svc: "API", strategy: "Route", port: "6443", detail: "Via management ingress, external DNS required" },
       { svc: "OAuth", strategy: "Route", port: "443", detail: "Via management ingress" },
-      { svc: "Konnectivity", strategy: "Route", port: "8091", detail: "Via management ingress" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated, enables CP→DP communication" },
       { svc: "Ignition", strategy: "Route", port: "443", detail: "Via management ingress" },
       { svc: "DP Ingress", strategy: "—", port: "80/443", detail: "Guest cluster router on workers" },
     ];
 
     SUMMARIES.azure_private = [
-      { svc: "API", strategy: "Route", port: "6443", detail: "HCP Router → Internal LB → Private Link" },
-      { svc: "OAuth", strategy: "Route", port: "443", detail: "HCP Router → Internal LB → Private Link" },
-      { svc: "Konnectivity", strategy: "Route", port: "8091", detail: "HCP Router → Internal LB → Private Link" },
-      { svc: "Ignition", strategy: "Route", port: "443", detail: "HCP Router → Internal LB → Private Link" },
+      { svc: "API", strategy: "Route", port: "6443", detail: "Workers → Private Endpoint → Internal LB → HCP Router" },
+      { svc: "OAuth", strategy: "Route", port: "443", detail: "Workers → Private Endpoint → Internal LB → HCP Router" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated via Private Link, enables CP→DP communication" },
+      { svc: "Ignition", strategy: "Route", port: "443", detail: "Workers → Private Endpoint → Internal LB → HCP Router" },
       { svc: "DP Ingress", strategy: "—", port: "80/443", detail: "Guest cluster router on workers" },
     ];
 
     SUMMARIES.agent_nodeport = [
       { svc: "API", strategy: "NodePort", port: "6443→30000+", detail: "On management cluster nodes" },
       { svc: "OAuth", strategy: "NodePort", port: "443→30000+", detail: "On management cluster nodes" },
-      { svc: "Konnectivity", strategy: "NodePort", port: "8091→30000+", detail: "On management cluster nodes" },
+      { svc: "Konnectivity", strategy: "NodePort", port: "8091→30000+", detail: "Reverse tunnel: DP-initiated, enables CP→DP communication" },
       { svc: "Ignition", strategy: "NodePort", port: "8443→30000+", detail: "On management cluster nodes" },
       { svc: "DP Ingress", strategy: "—", port: "80/443", detail: "Guest cluster router on bare metal nodes" },
     ];
@@ -918,7 +1032,7 @@
     SUMMARIES.agent_loadbalancer = [
       { svc: "API", strategy: "LoadBalancer", port: "6443", detail: "Via MetalLB (L2 Advertisement) — set hostname on all services (recommended)" },
       { svc: "OAuth", strategy: "Route", port: "443", detail: "Via management cluster ingress" },
-      { svc: "Konnectivity", strategy: "Route", port: "8091", detail: "Via management cluster ingress" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated, enables CP→DP communication" },
       { svc: "Ignition", strategy: "Route", port: "443", detail: "Via management cluster ingress" },
       { svc: "DP Ingress", strategy: "—", port: "80/443", detail: "MetalLB or NodePort for external access" },
     ];
@@ -926,7 +1040,7 @@
     SUMMARIES.kv_passthrough = [
       { svc: "API", strategy: "Route", port: "6443", detail: "Via management ingress (passthrough)" },
       { svc: "OAuth", strategy: "Route", port: "443", detail: "Via management ingress" },
-      { svc: "Konnectivity", strategy: "Route", port: "8091", detail: "Via management ingress" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated, enables CP→DP communication" },
       { svc: "Ignition", strategy: "Route", port: "443", detail: "Via management ingress" },
       { svc: "DP Ingress", strategy: "Passthrough", port: "443 only", detail: "Wildcard DNS via mgmt ingress, HTTPS only" },
     ];
@@ -934,7 +1048,7 @@
     SUMMARIES.kv_custom = [
       { svc: "API", strategy: "LoadBalancer", port: "6443", detail: "External LB (MetalLB or cloud) — set hostname on all services (recommended)" },
       { svc: "OAuth", strategy: "Route", port: "443", detail: "Via management ingress" },
-      { svc: "Konnectivity", strategy: "Route", port: "8091", detail: "Via management ingress" },
+      { svc: "Konnectivity", strategy: "Route", port: "443", detail: "Reverse tunnel: DP-initiated, enables CP→DP communication" },
       { svc: "Ignition", strategy: "Route", port: "443", detail: "Via management ingress" },
       { svc: "DP Ingress", strategy: "LoadBalancer", port: "80/443", detail: "User-managed LB + custom wildcard DNS" },
     ];
@@ -942,7 +1056,7 @@
     SUMMARIES.kv_isolated = [
       { svc: "API", strategy: "User-managed", port: "6443", detail: "Routing via Multus NAD configuration" },
       { svc: "OAuth", strategy: "User-managed", port: "443", detail: "Routing via Multus NAD configuration" },
-      { svc: "Konnectivity", strategy: "User-managed", port: "8091", detail: "Tunnel via Multus NAD" },
+      { svc: "Konnectivity", strategy: "User-managed", port: "8091", detail: "Reverse tunnel: DP-initiated via NAD, enables CP→DP communication" },
       { svc: "Ignition", strategy: "User-managed", port: "443", detail: "Routing via Multus NAD configuration" },
       { svc: "DP Ingress", strategy: "User-managed", port: "80/443", detail: "No mgmt cluster dependency" },
     ];

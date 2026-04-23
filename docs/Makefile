@@ -3,9 +3,24 @@ version := $(shell awk -f image-version.awk requirements.txt)
 VERSION ?= $(if $(MKDOCS_TAG),$(MKDOCS_TAG),$(version))
 IMG ?= quay.io/hypershift/mkdocs-material:$(VERSION)
 
+VENV := .venv
+PIP := $(VENV)/bin/pip
+MKDOCS := $(VENV)/bin/mkdocs
+
+$(MKDOCS): requirements.txt
+	python3 -m venv $(VENV)
+	$(PIP) install -r requirements.txt
+
+.PHONY: venv
+venv: $(MKDOCS)
+
+.PHONY: serve
+serve: venv
+	$(MKDOCS) serve -a 127.0.0.1:8000
+
 .PHONY: build
-build:
-	mkdocs build
+build: venv
+	$(MKDOCS) build
 
 .PHONY: build-containerized
 build-containerized:
