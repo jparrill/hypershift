@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	tmtypes "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 
@@ -39,7 +40,7 @@ func TestS3Uploader(t *testing.T) {
 		g := NewGomegaWithT(t)
 		ctrl := gomock.NewController(t)
 		mock := NewMockS3TransferAPI(ctrl)
-		mock.EXPECT().PutObject(gomock.Any(), gomock.Any()).Return(&transfermanager.PutObjectOutput{}, nil)
+		mock.EXPECT().UploadObject(gomock.Any(), gomock.Any()).Return(&transfermanager.UploadObjectOutput{}, nil)
 
 		uploader := newTestS3Uploader("my-bucket", "us-east-1", "", mock)
 		snapshotPath := createTempSnapshot(t)
@@ -54,11 +55,11 @@ func TestS3Uploader(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		kmsARN := "arn:aws:kms:us-east-1:123456789012:key/test-key-id"
 		mock := NewMockS3TransferAPI(ctrl)
-		mock.EXPECT().PutObject(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, input *transfermanager.PutObjectInput, opts ...func(*transfermanager.Options)) (*transfermanager.PutObjectOutput, error) {
+		mock.EXPECT().UploadObject(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, input *transfermanager.UploadObjectInput, opts ...func(*transfermanager.Options)) (*transfermanager.UploadObjectOutput, error) {
 				g.Expect(string(input.ServerSideEncryption)).To(Equal(string(tmtypes.ServerSideEncryptionAwsKms)))
-				g.Expect(input.SSEKMSKeyID).To(Equal(kmsARN))
-				return &transfermanager.PutObjectOutput{}, nil
+				g.Expect(aws.ToString(input.SSEKMSKeyID)).To(Equal(kmsARN))
+				return &transfermanager.UploadObjectOutput{}, nil
 			},
 		)
 
@@ -73,11 +74,11 @@ func TestS3Uploader(t *testing.T) {
 		g := NewGomegaWithT(t)
 		ctrl := gomock.NewController(t)
 		mock := NewMockS3TransferAPI(ctrl)
-		mock.EXPECT().PutObject(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, input *transfermanager.PutObjectInput, opts ...func(*transfermanager.Options)) (*transfermanager.PutObjectOutput, error) {
+		mock.EXPECT().UploadObject(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, input *transfermanager.UploadObjectInput, opts ...func(*transfermanager.Options)) (*transfermanager.UploadObjectOutput, error) {
 				g.Expect(string(input.ServerSideEncryption)).To(BeEmpty())
-				g.Expect(input.SSEKMSKeyID).To(BeEmpty())
-				return &transfermanager.PutObjectOutput{}, nil
+				g.Expect(input.SSEKMSKeyID).To(BeNil())
+				return &transfermanager.UploadObjectOutput{}, nil
 			},
 		)
 
@@ -92,7 +93,7 @@ func TestS3Uploader(t *testing.T) {
 		g := NewGomegaWithT(t)
 		ctrl := gomock.NewController(t)
 		mock := NewMockS3TransferAPI(ctrl)
-		mock.EXPECT().PutObject(gomock.Any(), gomock.Any()).Return(nil,
+		mock.EXPECT().UploadObject(gomock.Any(), gomock.Any()).Return(nil,
 			fmt.Errorf("upload failed: network error"),
 		)
 

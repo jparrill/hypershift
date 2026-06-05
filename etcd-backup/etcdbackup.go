@@ -3,6 +3,7 @@ package etcdbackup
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -137,10 +138,16 @@ func uploadToS3(ctx context.Context, opts options) error {
 }
 
 func mapToTags(m map[string]string) *string {
-	output := ""
-	for key, value := range m {
-		output += fmt.Sprintf("%s=%s&", key, value)
+	if len(m) == 0 {
+		empty := ""
+		return &empty
 	}
 
-	return &output
+	values := url.Values{}
+	for k, v := range m {
+		values.Set(k, v)
+	}
+
+	encoded := values.Encode()
+	return &encoded
 }
