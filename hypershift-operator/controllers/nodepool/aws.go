@@ -134,7 +134,11 @@ func resolveAWSAMI(hostedCluster *hyperv1.HostedCluster, nodePool *hyperv1.NodeP
 		return ami, nil
 	}
 	// Default behavior for Linux/RHCOS AMIs
-	ami, err := defaultNodePoolAMI(region, arch, releaseImage)
+	streamMeta, err := releaseImage.StreamForName("")
+	if err != nil {
+		return "", fmt.Errorf("couldn't resolve stream metadata: %w", err)
+	}
+	ami, err := defaultNodePoolAMI(region, arch, streamMeta)
 	if err != nil {
 		return "", fmt.Errorf("couldn't discover an AMI for release image: %w", err)
 	}
@@ -361,7 +365,18 @@ func (r *NodePoolReconciler) setAWSConditions(_ context.Context, nodePool *hyper
 			})
 		} else {
 			// Default behavior for Linux/RHCOS AMIs
-			ami, err := defaultNodePoolAMI(hcluster.Spec.Platform.AWS.Region, nodePool.Spec.Arch, releaseImage)
+			streamMeta, err := releaseImage.StreamForName("")
+			if err != nil {
+				SetStatusCondition(&nodePool.Status.Conditions, hyperv1.NodePoolCondition{
+					Type:               hyperv1.NodePoolValidPlatformImageType,
+					Status:             corev1.ConditionFalse,
+					Reason:             hyperv1.NodePoolValidationFailedReason,
+					Message:            fmt.Sprintf("Couldn't resolve stream metadata for release image %q: %s", nodePool.Spec.Release.Image, err.Error()),
+					ObservedGeneration: nodePool.Generation,
+				})
+				return fmt.Errorf("couldn't resolve stream metadata: %w", err)
+			}
+			ami, err := defaultNodePoolAMI(hcluster.Spec.Platform.AWS.Region, nodePool.Spec.Arch, streamMeta)
 			if err != nil {
 				SetStatusCondition(&nodePool.Status.Conditions, hyperv1.NodePoolCondition{
 					Type:               hyperv1.NodePoolValidPlatformImageType,

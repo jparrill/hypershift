@@ -55,6 +55,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/blang/semver"
+	"github.com/coreos/stream-metadata-go/stream"
 	"github.com/pkg/errors"
 )
 
@@ -736,11 +737,11 @@ func isAutoscalingEnabled(nodePool *hyperv1.NodePool) bool {
 	return nodePool.Spec.AutoScaling != nil
 }
 
-func defaultNodePoolAMI(region string, specifiedArch string, releaseImage *releaseinfo.ReleaseImage) (string, error) {
-	if releaseImage.StreamMetadata == nil {
-		return "", fmt.Errorf("release image stream metadata is nil")
+func defaultNodePoolAMI(region string, specifiedArch string, streamMeta *stream.Stream) (string, error) {
+	if streamMeta == nil {
+		return "", fmt.Errorf("stream metadata is nil")
 	}
-	arch, foundArch := releaseImage.StreamMetadata.Architectures[hyperv1.ArchAliases[specifiedArch]]
+	arch, foundArch := streamMeta.Architectures[hyperv1.ArchAliases[specifiedArch]]
 	if !foundArch {
 		return "", fmt.Errorf("couldn't find OS metadata for architecture %q", specifiedArch)
 	}
