@@ -571,8 +571,14 @@ func TestDefaultNodePoolAMI(t *testing.T) {
 		t.Fatalf("failed to parse multi-stream fixture: %v", err)
 	}
 	ri := &releaseinfo.ReleaseImage{StreamMetadata: defaultStream, OSStreams: osStreams}
-	rhel9Stream, _ := ri.StreamForName("rhel-9")
-	rhel10Stream, _ := ri.StreamForName("rhel-10")
+	rhel9Stream, err := ri.StreamForName("rhel-9")
+	if err != nil {
+		t.Fatalf("failed to resolve rhel-9 stream: %v", err)
+	}
+	rhel10Stream, err := ri.StreamForName("rhel-10")
+	if err != nil {
+		t.Fatalf("failed to resolve rhel-10 stream: %v", err)
+	}
 
 	testCases := []struct {
 		name          string

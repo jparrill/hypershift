@@ -759,16 +759,13 @@ func defaultNodePoolAMI(region string, specifiedArch string, streamMeta *stream.
 	return regionData.Image, nil
 }
 
-// defaultNodePoolGCPImage returns the default GCP image for a given architecture from release metadata.
-func defaultNodePoolGCPImage(specifiedArch string, releaseImage *releaseinfo.ReleaseImage) (string, error) {
-	if releaseImage == nil {
-		return "", fmt.Errorf("release image is nil, cannot determine GCP image")
-	}
-	if releaseImage.StreamMetadata == nil {
-		return "", fmt.Errorf("release image stream metadata is nil, cannot determine GCP image for architecture %q", specifiedArch)
+// DefaultNodePoolGCPImage returns the default GCP image for a given architecture from stream metadata.
+func DefaultNodePoolGCPImage(specifiedArch string, streamMeta *stream.Stream) (string, error) {
+	if streamMeta == nil {
+		return "", fmt.Errorf("stream metadata is nil, cannot determine GCP image for architecture %q", specifiedArch)
 	}
 
-	arch, foundArch := releaseImage.StreamMetadata.Architectures[hyperv1.ArchAliases[specifiedArch]]
+	arch, foundArch := streamMeta.Architectures[hyperv1.ArchAliases[specifiedArch]]
 	if !foundArch {
 		return "", fmt.Errorf("couldn't find OS metadata for architecture %q", specifiedArch)
 	}
