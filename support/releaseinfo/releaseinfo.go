@@ -40,6 +40,36 @@ type ProviderWithOpenShiftImageRegistryOverrides interface {
 type ReleaseImage struct {
 	*imageapi.ImageStream `json:",inline"`
 	StreamMetadata        *stream.Stream `json:"streamMetadata"`
+	// OSStreams holds per-stream metadata parsed from the ConfigMap "streams" key.
+	// Nil for single-stream payloads (OCP < 5.0).
+	OSStreams map[string]*stream.Stream `json:"-"`
+}
+
+// StreamForName returns stream metadata by name. If name is empty, returns
+// the default stream (StreamMetadata). If name is non-empty, looks up
+// OSStreams and returns an error if the named stream is not found.
+func (i *ReleaseImage) StreamForName(name string) (*stream.Stream, error) {
+	if name == "" {
+		if i.StreamMetadata == nil {
+			return nil, fmt.Errorf("no default stream metadata available")
+		}
+		return i.StreamMetadata, nil
+	}
+	if i.OSStreams == nil {
+		return nil, fmt.Errorf("stream %q not found: no multi-stream metadata available", name)
+	}
+	meta, ok := i.OSStreams[name]
+	if !ok || meta == nil {
+		available := make([]string, 0, len(i.OSStreams))
+		for k, v := range i.OSStreams {
+			if v != nil {
+				available = append(available, k)
+			}
+		}
+		sort.Strings(available)
+		return nil, fmt.Errorf("stream %q not found; available streams: %v", name, available)
+	}
+	return meta, nil
 }
 
 func (i *ReleaseImage) Version() string {

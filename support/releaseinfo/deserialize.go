@@ -21,18 +21,32 @@ func DeserializeImageStream(data []byte) (*imageapi.ImageStream, error) {
 	return &imageStream, nil
 }
 
-func DeserializeImageMetadata(data []byte) (*stream.Stream, error) {
+func DeserializeImageMetadata(data []byte) (*stream.Stream, map[string]*stream.Stream, error) {
 	var coreOSMetaCM corev1.ConfigMap
 	if err := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 100).Decode(&coreOSMetaCM); err != nil {
-		return nil, fmt.Errorf("couldn't read image lookup data as serialized ConfigMap: %w\nraw data:\n%s", err, string(data))
+		return nil, nil, fmt.Errorf("couldn't read image lookup data as serialized ConfigMap: %w\nraw data:\n%s", err, string(data))
 	}
+
+	var osStreams map[string]*stream.Stream
+	if streamsData, ok := coreOSMetaCM.Data["streams"]; ok {
+		if err := json.Unmarshal([]byte(streamsData), &osStreams); err != nil {
+			return nil, nil, fmt.Errorf("couldn't decode multi-stream metadata: %w\n%s", err, streamsData)
+		}
+	}
+	hasOSStreams := len(osStreams) > 0
+
 	streamData, hasStreamData := coreOSMetaCM.Data["stream"]
-	if !hasStreamData {
-		return nil, fmt.Errorf("coreos stream metadata configmap is missing the 'stream' key")
+	if !hasStreamData && !hasOSStreams {
+		return nil, nil, fmt.Errorf("coreos stream metadata configmap is missing both 'stream' and 'streams' keys")
 	}
-	var coreOSMeta stream.Stream
-	if err := json.Unmarshal([]byte(streamData), &coreOSMeta); err != nil {
-		return nil, fmt.Errorf("couldn't decode stream metadata data: %w\n%s", err, streamData)
+
+	var coreOSMeta *stream.Stream
+	if hasStreamData {
+		coreOSMeta = &stream.Stream{}
+		if err := json.Unmarshal([]byte(streamData), coreOSMeta); err != nil {
+			return nil, nil, fmt.Errorf("couldn't decode stream metadata: %w\n%s", err, streamData)
+		}
 	}
-	return &coreOSMeta, nil
+
+	return coreOSMeta, osStreams, nil
 }
