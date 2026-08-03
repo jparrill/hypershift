@@ -59,7 +59,7 @@ func RegisterNodePoolOSImageStreamStatusTests(getTestCtx internal.TestContextGet
 
 // osImageStreamBeforeEach is the shared BeforeEach for all OSImageStream test suites.
 // It initializes the test context and skips when the OSStreams feature gate is disabled
-// or the platform does not use RHCOS nodes.
+// (detected by absence of spec/status.osImageStream fields in the NodePool CRD).
 func osImageStreamBeforeEach(testCtx **internal.TestContext) {
 	*testCtx = internal.GetTestContext()
 	Expect(*testCtx).NotTo(BeNil(), "test context should be set up in BeforeSuite")
@@ -285,19 +285,22 @@ func NodePoolOSImageStreamDefaultStatusTest(getTestCtx internal.TestContextGette
 		)
 
 		expectedStream := hyperv1.OSImageStreamRHEL10
+		if e2eutil.IsLessThan(e2eutil.Version50) {
+			expectedStream = hyperv1.OSImageStreamRHEL9
+		}
 
 		GinkgoWriter.Printf("Waiting for NodePool %s/%s status.osImageStream.name to be %s\n",
 			defaultNP.Namespace, defaultNP.Name, expectedStream)
 		e2eutil.EventuallyObject[*hyperv1.NodePool](
 			GinkgoTB(), ctx,
-			"default NodePool status to report a non-empty osImageStream",
+			fmt.Sprintf("default NodePool status to report osImageStream=%s", expectedStream),
 			func(pollCtx context.Context) (*hyperv1.NodePool, error) {
 				pool := &hyperv1.NodePool{}
 				err := testCtx.MgmtClient.Get(pollCtx, crclient.ObjectKeyFromObject(defaultNP), pool)
 				return pool, err
 			},
 			[]e2eutil.Predicate[*hyperv1.NodePool]{
-				osImageStreamSetPredicate(),
+				osImageStreamMatchPredicate(expectedStream),
 			},
 			e2eutil.WithTimeout(10*time.Minute),
 			e2eutil.WithInterval(15*time.Second),
@@ -342,6 +345,21 @@ func osImageStreamSetPredicate() e2eutil.Predicate[*hyperv1.NodePool] {
 		default:
 			return false, fmt.Sprintf("status.osImageStream.name=%q is not a recognized RHEL stream", name), nil
 		}
+	}
+}
+
+// osImageStreamMatchPredicate returns a predicate that validates that a NodePool's
+// status.osImageStream.name matches the expected value exactly.
+func osImageStreamMatchPredicate(expected string) e2eutil.Predicate[*hyperv1.NodePool] {
+	return func(pool *hyperv1.NodePool) (bool, string, error) {
+		name := pool.Status.OSImageStream.Name
+		if name == "" {
+			return false, "status.osImageStream.name is empty", nil
+		}
+		if name != expected {
+			return false, fmt.Sprintf("status.osImageStream.name=%q, want %q", name, expected), nil
+		}
+		return true, fmt.Sprintf("status.osImageStream.name=%s", name), nil
 	}
 }
 
@@ -421,21 +439,8 @@ func NodePoolOSImageStreamExplicitDefaultNoRolloutTest(getTestCtx internal.TestC
 			"failed to patch NodePool %s with osImageStream=%s", defaultNP.Name, versionDerivedDefault)
 		GinkgoWriter.Printf("Patched NodePool %s with osImageStream=%s\n", defaultNP.Name, versionDerivedDefault)
 
-		// Restore the original state on cleanup.
-		DeferCleanup(func() {
-			current := &hyperv1.NodePool{}
-			if err := testCtx.MgmtClient.Get(ctx, crclient.ObjectKeyFromObject(defaultNP), current); err != nil {
-				if !apierrors.IsNotFound(err) {
-					GinkgoWriter.Printf("Warning: failed to get NodePool %s for cleanup: %v\n", defaultNP.Name, err)
-				}
-				return
-			}
-			cleanupBase := current.DeepCopy()
-			current.Spec.OSImageStream.Name = ""
-			Expect(testCtx.MgmtClient.Patch(ctx, current, crclient.MergeFrom(cleanupBase))).To(Succeed(),
-				"cleanup: failed to restore NodePool %s osImageStream", defaultNP.Name)
-			GinkgoWriter.Printf("Restored NodePool %s osImageStream to unset\n", defaultNP.Name)
-		})
+		// osImageStream is immutable once set (CEL: "osImageStream cannot be removed once set"),
+		// so cleanup is a no-op — the value we patched equals the version-derived default.
 
 		// Verify the config hash does not change over time.
 		// The controller normalizes the explicit default to empty for hash computation,
@@ -539,9 +544,10 @@ func NodePoolOSImageStreamUpgradeVerificationTest(getTestCtx internal.TestContex
 		// Verify osImageStream status after upgrade.
 		// An upgraded NodePool preserves its existing stream — the controller
 		// uses status.osImageStream (set from the pre-upgrade nodes) rather
-		// than the version-derived default. Since the NP was created at a
-		// pre-5.0 release, nodes booted with rhel-9 and the stream stays rhel-9
-		// even after upgrading to 5.0.
+		// than the version-derived default.
+		// Currently E2E_PREVIOUS_RELEASE_IMAGE is always 4.x (rhel-9 nodes).
+		// TODO(CNTRLPLANE-3871): When 5.x→5.y upgrades are tested, derive
+		// expectedStream from the previous release version instead of hardcoding.
 		expectedStream := hyperv1.OSImageStreamRHEL9
 
 		e2eutil.EventuallyObject[*hyperv1.NodePool](
@@ -553,7 +559,7 @@ func NodePoolOSImageStreamUpgradeVerificationTest(getTestCtx internal.TestContex
 				return pool, err
 			},
 			[]e2eutil.Predicate[*hyperv1.NodePool]{
-				e2eutil.OSImageStreamPredicate(expectedStream),
+				osImageStreamMatchPredicate(expectedStream),
 			},
 			e2eutil.WithTimeout(10*time.Minute),
 			e2eutil.WithInterval(15*time.Second),
